@@ -15,10 +15,11 @@
 #define MAX_FILENAME_BYTES 260
 #define MAX_DATA_BYTES 400
 #define MAX_SHA1_BYTES 40
+#define MSG_TYPE_BYTES 1
 
 struct __attribute__((__packed__)) file_copy_header {
 	uint8_t type;
-	char filename[FILENAME_LEN];
+	char filename[MAX_FILENAME_BYTES];
 	uint64_t num_packets;
 };
 
@@ -28,7 +29,7 @@ struct __attribute__((__packed__)) filedata {
 	uint64_t packet_id;
 	uint64_t start_byte;
 	uint64_t data_len;
-	char data[MAX_DATA_LEN];
+	char data[MAX_DATA_BYTES];
 };
 
 struct __attribute__((__packed__)) filedata_ACK {
@@ -39,8 +40,8 @@ struct __attribute__((__packed__)) filedata_ACK {
 
 struct __attribute__((__packed__)) E2E_header {
 	uint8_t type;
-	char filename[FILENAME_LEN];
-	char hash[MAX_SHA1_BYTES];
+	char filename[MAX_FILENAME_BYTES];
+	unsigned char hash[MAX_SHA1_BYTES];
 };
 
 

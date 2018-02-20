@@ -68,7 +68,7 @@ makedatafile: makedatafile.cpp
 # Build fileclient
 # 
 fileclient: fileclient.cpp $(C150AR) $(INCLUDES)
-	$(CPP) -o fileclient $(CPPFLAGS) fileclient.cpp $(C150AR)
+	$(CPP) -o fileclient $(CPPFLAGS) fileclient.cpp -lssl -lcrypto $(C150AR)
 
 #
 # Build fileserver

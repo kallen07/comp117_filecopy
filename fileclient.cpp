@@ -20,16 +20,30 @@
 #include <iostream>               // for cout
 #include <fstream>                // for input files
 #include <string>
+#include "c150dgmsocket.h"
+#include <openssl/sha.h>
+#include <cstdlib>
+#include <sstream>
+#include <stdio.h>
 
+
+#include "globals.h"
 //
 // Always use namespace C150NETWORK with COMP 150 IDS framework!
 //
 using namespace C150NETWORK;
 using namespace std;
 
+const int SERVERARG = 1;
+const int TIMEOUT = 2000;    // in milliseconds
 
 void checkDirectory(char *dirname);
 bool isFile(string fname);
+bool end_to_end_check(C150DgmSocket *sockfd, string fname);
+bool send_e2e_message(char *message_to_send, int res_type, char* filename,
+					  struct E2E_header *response, C150DgmSocket *sockfd);
+bool get_e2e_response(char *incoming_msg_buffer, int type, char * curr_file,
+					  struct E2E_header *response);
 
 ////////////////////////////////////////////////////////////////////////////////
 /*********************************** MAIN *************************************/
@@ -45,8 +59,6 @@ int main(int argc, char *argv[])
 	string server;
 	DIR *SRC;                   // Unix descriptor for open directory
 	struct dirent *sourceFile;  // Directory entry for source file
-
-
 
 	
 	/* Check command line and parse arguments */
@@ -87,7 +99,11 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-  
+	/* Create socket to connect to the server */
+  	C150DgmSocket *sock = new C150DgmSocket();
+  	sock->setServerName(argv[SERVERARG]);
+  	sock->turnOnTimeouts(TIMEOUT);
+
 	//
 	//  Loop copying the files
 	//
@@ -102,7 +118,7 @@ int main(int argc, char *argv[])
 		// do the copy -- this will check for and 
 		// skip subdirectories
 		if (isFile(sourceFile->d_name)) {
-			// do End to End check
+			end_to_end_check(sock, sourceFile->d_name);
 		}
 	}
 
@@ -154,4 +170,116 @@ bool isFile(string fname) {
 		return false;
 	}
 	return true;
+}
+
+
+/* arguments:
+ *		sockfd: socket file descriptor for the server
+ * 		fname: fname to check
+ * returns:
+ * 		true if the end to end check succeeded
+ *		false otherwise
+ */
+bool end_to_end_check(C150DgmSocket *sockfd, string fname)
+{
+	/* create end to end check request msg */
+	struct E2E_header e2e_req;
+	e2e_req.type = E2E_REQ;
+	strcpy(e2e_req.filename, fname.c_str());
+	bzero(e2e_req.hash, MAX_SHA1_BYTES);
+
+	/* get hash from server */
+	struct E2E_header hash_msg;
+	send_e2e_message((char *)&e2e_req, E2E_HASH, e2e_req.filename, &hash_msg, sockfd);
+
+	// compare the hash
+	ifstream *t;
+	stringstream *buffer;
+	unsigned char hash[20];
+
+	t = new ifstream(e2e_req.filename);
+	buffer = new stringstream;
+	*buffer << t->rdbuf();
+	SHA1((const unsigned char*)buffer->str().c_str(), 
+		(buffer->str()).length(), hash);
+	delete t;
+	delete buffer;
+
+	struct E2E_header hash_result_msg;
+	strcpy(hash_result_msg.filename, fname.c_str());
+	bzero(hash_result_msg.hash, MAX_SHA1_BYTES);
+
+	if (hash == hash_msg.hash) {
+		hash_result_msg.type = E2E_SUCC;
+	} else {
+		hash_result_msg.type = E2E_FAIL;
+	}
+
+	// send a sucess/fail message
+	struct E2E_header done_msg;
+	send_e2e_message((char*)&hash_result_msg, E2E_DONE, 
+					e2e_req.filename, &done_msg, sockfd);
+
+	return true; // to do fix this
+}
+
+bool send_e2e_message(char *message_to_send, int res_type, char* filename,
+					  struct E2E_header *response, C150DgmSocket *sockfd)
+{	
+
+	ssize_t readlen;
+	char incomingMessage[sizeof(struct E2E_header)];
+	bool got_hash;
+	
+	do {
+		/* send end to end check request msg */
+		sockfd->write(message_to_send, sizeof(struct E2E_header));
+
+		/* wait for response */
+		readlen = sockfd->read(incomingMessage, sizeof(incomingMessage));
+		got_hash = get_e2e_response(incomingMessage, res_type, filename, response);
+		if (got_hash) break;
+
+		/* keep reading messages until timedout */
+		while (sockfd->timedout() == false) {
+			readlen = sockfd->read(incomingMessage, sizeof(incomingMessage));
+
+			if (readlen < 0) {
+				fprintf(stderr, "ERROR: server closed the socket");
+			}
+
+			got_hash = get_e2e_response(incomingMessage, res_type, 
+										filename, response);
+			if (got_hash) break;
+		}
+
+	// NEEDSWORK should we limit the number of tries?
+	} while (sockfd->timedout() == true);
+
+	return true;
+}
+
+/* arguments:
+ * 		incoming_msg_buffer: buffer containing a message from the server
+ * 		type: the desired message type
+ * 		curr_file: name of the current file that we are checking
+ * 		response: will put the message in incoming_msg_buffer here if
+ *				 get_e2e_response returns true
+ * returns :
+ * 		true: if the incoming message has the correct type and is 
+ * 			  related to curr_file
+ * 		false: otherwise
+ */
+bool get_e2e_response(char *incoming_msg_buffer, int type, char * curr_file,
+					  struct E2E_header *response)
+{
+	if ((uint8_t)incoming_msg_buffer[0] == type) {
+		memcpy(response, incoming_msg_buffer, sizeof(*response));
+		if (response->filename == curr_file) {
+			return true;
+		}
+	}
+
+	bzero(response, sizeof(*response));
+	return false;
 }
