@@ -43,7 +43,11 @@ bool handle_e2e_request(C150DgmSocket *sock, char incomingMessage[], uint8_t typ
 
 int main(int argc, char *argv[])
 {
+<<<<<<< HEAD
 	/* Ensure our submission is graded */
+=======
+  	/* Ensure our submission is graded */
+>>>>>>> ba2130d7755c277f9ef37bcf2d69d029a87829e9
 	GRADEME(argc, argv);
 
 	int networknastiness;
@@ -93,11 +97,19 @@ int main(int argc, char *argv[])
 
 	try {
 		/* socket for listening messages */
+<<<<<<< HEAD
 		C150DgmSocket *sock = new C150NastyDgmSocket(networknastiness);
 
 		/* infinite loop processing messages */
 		while (1) {
 			/* read a packet */
+=======
+	    C150DgmSocket *sock = new C150NastyDgmSocket(networknastiness);
+
+	    /* infinite loop processing messages */
+	    while (1) {
+	    	/* read a packet */
+>>>>>>> ba2130d7755c277f9ef37bcf2d69d029a87829e9
 			readlen = sock -> read(incomingMessage, sizeof(incomingMessage));
 			
 			if (readlen == 0) 
@@ -121,10 +133,17 @@ int main(int argc, char *argv[])
 					fprintf(stderr, "No matching message type.\n");
 			}
 
+<<<<<<< HEAD
 		}
 
 	} catch (C150NetworkException e) {
 		cerr << argv[0] << ": caught C150NetworkException: " << e.formattedExplanation() << endl;
+=======
+	    }
+
+	} catch (C150NetworkException e) {
+    	cerr << argv[0] << ": caught C150NetworkException: " << e.formattedExplanation() << endl;
+>>>>>>> ba2130d7755c277f9ef37bcf2d69d029a87829e9
 	}
 
 	return 0;
@@ -158,7 +177,11 @@ bool handle_e2e_request(C150DgmSocket *sock, char incomingMessage[], uint8_t typ
 		/* compute the hash on the server side */
 		ifstream *t;
 		stringstream *buffer;
+<<<<<<< HEAD
 		unsigned char hash[MAX_SHA1_BYTES];
+=======
+		unsigned char hash[20];
+>>>>>>> ba2130d7755c277f9ef37bcf2d69d029a87829e9
 
 		t = new ifstream(request.filename);
 		buffer = new stringstream;
@@ -171,7 +194,11 @@ bool handle_e2e_request(C150DgmSocket *sock, char incomingMessage[], uint8_t typ
 		/* construct response header */
 		response.type = E2E_HASH;
 		strcpy(response.filename, request.filename);
+<<<<<<< HEAD
 		for (int i=0; i<MAX_SHA1_BYTES; i++)
+=======
+		for (int i=0; i<20;i++)
+>>>>>>> ba2130d7755c277f9ef37bcf2d69d029a87829e9
 			response.hash[i] = hash[i];
 
 		/* send response */
