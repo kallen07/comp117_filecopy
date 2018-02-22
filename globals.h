@@ -14,7 +14,7 @@
 
 #define MAX_FILENAME_BYTES 260
 #define MAX_DATA_BYTES 400
-#define MAX_SHA1_BYTES 40
+#define MAX_SHA1_BYTES 20
 #define MSG_TYPE_BYTES 1
 
 struct __attribute__((__packed__)) file_copy_header {
