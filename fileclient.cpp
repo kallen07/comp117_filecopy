@@ -8,7 +8,7 @@
  * Purpose: 
  *          
  */
-
+#include "c150nastydgmsocket.h"
 #include "c150nastyfile.h"        // for c150nastyfile & framework
 #include "c150grading.h"
 #include <dirent.h>
@@ -44,6 +44,7 @@ bool send_e2e_message(char *message_to_send, int res_type, char* filename,
 					  struct E2E_header *response, C150DgmSocket *sockfd);
 bool get_e2e_response(char *incoming_msg_buffer, int type, char * curr_file,
 					  struct E2E_header *response);
+bool compute_and_compare_hash(char *filename, struct E2E_header *hash_msg);
 
 ////////////////////////////////////////////////////////////////////////////////
 /*********************************** MAIN *************************************/
@@ -51,7 +52,7 @@ bool get_e2e_response(char *incoming_msg_buffer, int type, char * curr_file,
 
 int main(int argc, char *argv[])
 {
-  	/* Ensure our submission is graded */
+	/* Ensure our submission is graded */
 	GRADEME(argc, argv);
 
 	int networknastiness;
@@ -100,9 +101,9 @@ int main(int argc, char *argv[])
 	}
 
 	/* Create socket to connect to the server */
-  	C150DgmSocket *sock = new C150DgmSocket();
-  	sock->setServerName(argv[SERVERARG]);
-  	sock->turnOnTimeouts(TIMEOUT);
+	C150DgmSocket *sock = new C150NastyDgmSocket(networknastiness);
+	sock->setServerName(argv[SERVERARG]);
+	sock->turnOnTimeouts(TIMEOUT);
 
 	//
 	//  Loop copying the files
@@ -117,59 +118,13 @@ int main(int argc, char *argv[])
 
 		// do the copy -- this will check for and 
 		// skip subdirectories
-		if (isFile(sourceFile->d_name)) {
+		// if (isFile(sourceFile->d_name)) {
 			end_to_end_check(sock, sourceFile->d_name);
-		}
+		// }
 	}
 
 	closedir(SRC);
 	return 0;
-}
-
-// ------------------------------------------------------
-//
-//                   checkDirectory
-//
-//  Make sure directory exists
-//     
-// ------------------------------------------------------
-
-void checkDirectory(char *dirname) {
-	struct stat statbuf;  
-	if (lstat(dirname, &statbuf) != 0) {
-		fprintf(stderr,"Error: directory %s does not exist\n", dirname);
-		exit(1);
-	}
-
-	if (!S_ISDIR(statbuf.st_mode)) {
-		fprintf(stderr,"File %s exists but is not a directory\n", dirname);
-		exit(1);
-	}
-}
-
-
-// ------------------------------------------------------
-//
-//                   isFile
-//
-//  Make sure the supplied file is not a directory or
-//  other non-regular file.
-//     
-// ------------------------------------------------------
-
-bool isFile(string fname) {
-	const char *filename = fname.c_str();
-	struct stat statbuf;  
-	if (lstat(filename, &statbuf) != 0) {
-		fprintf(stderr,"isFile: Error stating supplied source file %s\n", filename);
-		return false;
-	}
-
-	if (!S_ISREG(statbuf.st_mode)) {
-		fprintf(stderr,"isFile: %s exists but is not a regular file\n", filename);
-		return false;
-	}
-	return true;
 }
 
 
@@ -182,37 +137,46 @@ bool isFile(string fname) {
  */
 bool end_to_end_check(C150DgmSocket *sockfd, string fname)
 {
+	/* NEEDSWORK: 
+		1) hide e2e_header initialization, probably turn e2e_header into a class
+		2) attempt should be a counter for filecopy, set to 1 for e2e submission
+		3) refactor code, e.g. sockfd should be the 1st arg
+		4) return val: now it always rets true
+	*/
+
+	int attempt = 1; // e2e attempt set to 1
+
 	/* create end to end check request msg */
 	struct E2E_header e2e_req;
 	e2e_req.type = E2E_REQ;
 	strcpy(e2e_req.filename, fname.c_str());
 	bzero(e2e_req.hash, MAX_SHA1_BYTES);
 
-	/* get hash from server */
+	/* get hash response from the server */
 	struct E2E_header hash_msg;
 	send_e2e_message((char *)&e2e_req, E2E_HASH, e2e_req.filename, &hash_msg, sockfd);
 
-	// compare the hash
-	ifstream *t;
-	stringstream *buffer;
-	unsigned char hash[20];
+	/* compare client and server hash result */
+	bool hash_match = compute_and_compare_hash(e2e_req.filename, &hash_msg);
 
-	t = new ifstream(e2e_req.filename);
-	buffer = new stringstream;
-	*buffer << t->rdbuf();
-	SHA1((const unsigned char*)buffer->str().c_str(), 
-		(buffer->str()).length(), hash);
-	delete t;
-	delete buffer;
-
+	/* process hash result from the server */
 	struct E2E_header hash_result_msg;
 	strcpy(hash_result_msg.filename, fname.c_str());
 	bzero(hash_result_msg.hash, MAX_SHA1_BYTES);
 
-	if (hash == hash_msg.hash) {
+
+	if (hash_match) {
 		hash_result_msg.type = E2E_SUCC;
+		printf("File %s end-to-end check SUCCEEDS -- informing server\n", fname.c_str()); 
+
+		// NEEDWORK: finalize grading logs, add attempt counter
+		*GRADING << "File: " << fname 
+				 << " end-to-end check succeeded, attempt " << attempt << endl;
 	} else {
 		hash_result_msg.type = E2E_FAIL;
+		printf("File %s end-to-end check FAILS -- giving up\n", fname.c_str());
+		*GRADING << "File: " << fname 
+				 << " end-to-end check failed, attempt " << attempt << endl;
 	}
 
 	// send a sucess/fail message
@@ -220,9 +184,20 @@ bool end_to_end_check(C150DgmSocket *sockfd, string fname)
 	send_e2e_message((char*)&hash_result_msg, E2E_DONE, 
 					e2e_req.filename, &done_msg, sockfd);
 
-	return true; // to do fix this
+	return true; // NEEDSWORK: to do fix this
 }
 
+/* arguments:
+ *		sockfd: socket
+ * 		message_to_send: message to send to the server, pointer to e2e_header struct
+ * 		res_type: expected response type from the server
+ *		filename: expected filename from teh server
+ * 		response: response from the server, pointer to e2e_header struct
+ * returns :
+ * 		true: if the message is successful sent and the according response is
+ *		received 
+ * 		false: otherwise
+ */
 bool send_e2e_message(char *message_to_send, int res_type, char* filename,
 					  struct E2E_header *response, C150DgmSocket *sockfd)
 {	
@@ -275,7 +250,7 @@ bool get_e2e_response(char *incoming_msg_buffer, int type, char * curr_file,
 {
 	if ((uint8_t)incoming_msg_buffer[0] == type) {
 		memcpy(response, incoming_msg_buffer, sizeof(*response));
-		if (response->filename == curr_file) {
+		if (string(response->filename) == curr_file) {
 			return true;
 		}
 	}
@@ -283,3 +258,83 @@ bool get_e2e_response(char *incoming_msg_buffer, int type, char * curr_file,
 	bzero(response, sizeof(*response));
 	return false;
 }
+
+/* arguments: 
+ *		filename: the file to compute hash on
+ *		hash_msg: E2E_HASH response received from the server
+ * returns: 
+ *		true: if the hashes match and the file copied successfully
+ *		false: otherwise
+ */
+
+bool compute_and_compare_hash(char *filename, struct E2E_header *hash_msg){
+	/* compute the hash on the client side */
+	unsigned char hash[MAX_SHA1_BYTES];
+	ifstream *t;
+	stringstream *buffer;
+	bool hash_match = true;
+
+	t = new ifstream(filename);
+	buffer = new stringstream;
+	*buffer << t->rdbuf();
+	SHA1((const unsigned char*)buffer->str().c_str(), 
+		(buffer->str()).length(), hash);
+	delete t;
+	delete buffer;
+
+	/* compare client and server hash */
+	for (int i=0; i<MAX_SHA1_BYTES; i++)
+		if (hash[i] != hash_msg->hash[i])
+			return false;
+
+	return hash_match;
+
+}
+
+
+// ------------------------------------------------------
+//
+//                   checkDirectory
+//
+//  Make sure directory exists
+//     
+// ------------------------------------------------------
+
+void checkDirectory(char *dirname) {
+	struct stat statbuf;  
+	if (lstat(dirname, &statbuf) != 0) {
+		fprintf(stderr,"Error: directory %s does not exist\n", dirname);
+		exit(1);
+	}
+
+	if (!S_ISDIR(statbuf.st_mode)) {
+		fprintf(stderr,"File %s exists but is not a directory\n", dirname);
+		exit(1);
+	}
+}
+
+
+// ------------------------------------------------------
+//
+//                   isFile
+//
+//  Make sure the supplied file is not a directory or
+//  other non-regular file.
+//     
+// ------------------------------------------------------
+
+bool isFile(string fname) {
+	const char *filename = fname.c_str();
+	struct stat statbuf;  
+	if (lstat(filename, &statbuf) != 0) {
+		fprintf(stderr,"isFile: Error stating supplied source file %s\n", filename);
+		return false;
+	}
+
+	if (!S_ISREG(statbuf.st_mode)) {
+		fprintf(stderr,"isFile: %s exists but is not a regular file\n", filename);
+		return false;
+	}
+	return true;
+}
+
