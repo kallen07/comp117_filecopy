@@ -101,15 +101,9 @@ int main(int argc, char *argv[])
 	}
 
 	/* Create socket to connect to the server */
-<<<<<<< HEAD
 	C150DgmSocket *sock = new C150NastyDgmSocket(networknastiness);
 	sock->setServerName(argv[SERVERARG]);
 	sock->turnOnTimeouts(TIMEOUT);
-=======
-  	C150DgmSocket *sock = new C150NastyDgmSocket(networknastiness);
-  	sock->setServerName(argv[SERVERARG]);
-  	sock->turnOnTimeouts(TIMEOUT);
->>>>>>> ba2130d7755c277f9ef37bcf2d69d029a87829e9
 
 	//
 	//  Loop copying the files
@@ -151,11 +145,7 @@ bool end_to_end_check(C150DgmSocket *sockfd, string fname)
 	*/
 
 	int attempt = 1; // e2e attempt set to 1
-<<<<<<< HEAD
-
-=======
 	
->>>>>>> ba2130d7755c277f9ef37bcf2d69d029a87829e9
 	/* create end to end check request msg */
 	struct E2E_header e2e_req;
 	e2e_req.type = E2E_REQ;
@@ -279,11 +269,7 @@ bool get_e2e_response(char *incoming_msg_buffer, int type, char * curr_file,
 
 bool compute_and_compare_hash(char *filename, struct E2E_header *hash_msg){
 	/* compute the hash on the client side */
-<<<<<<< HEAD
 	unsigned char hash[MAX_SHA1_BYTES];
-=======
-	unsigned char hash[20];
->>>>>>> ba2130d7755c277f9ef37bcf2d69d029a87829e9
 	ifstream *t;
 	stringstream *buffer;
 	bool hash_match = true;
