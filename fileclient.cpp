@@ -52,7 +52,7 @@ bool compute_and_compare_hash(char *filename, struct E2E_header *hash_msg);
 
 int main(int argc, char *argv[])
 {
-  	/* Ensure our submission is graded */
+	/* Ensure our submission is graded */
 	GRADEME(argc, argv);
 
 	int networknastiness;
@@ -101,9 +101,9 @@ int main(int argc, char *argv[])
 	}
 
 	/* Create socket to connect to the server */
-  	C150DgmSocket *sock = new C150NastyDgmSocket(networknastiness);
-  	sock->setServerName(argv[SERVERARG]);
-  	sock->turnOnTimeouts(TIMEOUT);
+	C150DgmSocket *sock = new C150NastyDgmSocket(networknastiness);
+	sock->setServerName(argv[SERVERARG]);
+	sock->turnOnTimeouts(TIMEOUT);
 
 	//
 	//  Loop copying the files
@@ -269,7 +269,7 @@ bool get_e2e_response(char *incoming_msg_buffer, int type, char * curr_file,
 
 bool compute_and_compare_hash(char *filename, struct E2E_header *hash_msg){
 	/* compute the hash on the client side */
-	unsigned char hash[20];
+	unsigned char hash[MAX_SHA1_BYTES];
 	ifstream *t;
 	stringstream *buffer;
 	bool hash_match = true;

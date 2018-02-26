@@ -20,6 +20,7 @@
 struct __attribute__((__packed__)) file_copy_header {
 	uint8_t type;
 	char filename[MAX_FILENAME_BYTES];
+	uint64_t file_id;
 	uint64_t num_packets;
 };
 

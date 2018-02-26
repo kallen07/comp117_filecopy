@@ -43,7 +43,7 @@ bool handle_e2e_request(C150DgmSocket *sock, char incomingMessage[], uint8_t typ
 
 int main(int argc, char *argv[])
 {
-  	/* Ensure our submission is graded */
+	/* Ensure our submission is graded */
 	GRADEME(argc, argv);
 
 	int networknastiness;
@@ -93,11 +93,11 @@ int main(int argc, char *argv[])
 
 	try {
 		/* socket for listening messages */
-	    C150DgmSocket *sock = new C150NastyDgmSocket(networknastiness);
+		C150DgmSocket *sock = new C150NastyDgmSocket(networknastiness);
 
-	    /* infinite loop processing messages */
-	    while (1) {
-	    	/* read a packet */
+		/* infinite loop processing messages */
+		while (1) {
+			/* read a packet */
 			readlen = sock -> read(incomingMessage, sizeof(incomingMessage));
 			
 			if (readlen == 0) 
@@ -121,10 +121,10 @@ int main(int argc, char *argv[])
 					fprintf(stderr, "No matching message type.\n");
 			}
 
-	    }
+		}
 
 	} catch (C150NetworkException e) {
-    	cerr << argv[0] << ": caught C150NetworkException: " << e.formattedExplanation() << endl;
+		cerr << argv[0] << ": caught C150NetworkException: " << e.formattedExplanation() << endl;
 	}
 
 	return 0;
@@ -142,6 +142,7 @@ int main(int argc, char *argv[])
 bool handle_e2e_request(C150DgmSocket *sock, char incomingMessage[], uint8_t type)
 {
 	// NEEDSWORK: grading logs dont seem to be logging all msgs
+	//			  rename file to remove .tmp if check success
 
 	/* initalize request and response e2e_header */
 	struct E2E_header request;
@@ -158,7 +159,7 @@ bool handle_e2e_request(C150DgmSocket *sock, char incomingMessage[], uint8_t typ
 		/* compute the hash on the server side */
 		ifstream *t;
 		stringstream *buffer;
-		unsigned char hash[20];
+		unsigned char hash[MAX_SHA1_BYTES];
 
 		t = new ifstream(request.filename);
 		buffer = new stringstream;
@@ -170,14 +171,10 @@ bool handle_e2e_request(C150DgmSocket *sock, char incomingMessage[], uint8_t typ
 
 		/* construct response header */
 		response.type = E2E_HASH;
-		strcpy(response.filename, request.filename);
-		for (int i=0; i<20;i++)
+		strcpy(response.filename, request.filename);		
+		for (int i=0; i<MAX_SHA1_BYTES; i++)
 			response.hash[i] = hash[i];
 
-		/* send response */
-		sock->write((char *)&response, sizeof(struct E2E_header));
-
-		return true;
 
 	} else if ( type == E2E_SUCC || type == E2E_FAIL ) {
 
@@ -194,13 +191,12 @@ bool handle_e2e_request(C150DgmSocket *sock, char incomingMessage[], uint8_t typ
 		strcpy(response.filename, request.filename);
 		bzero(response.hash, MAX_SHA1_BYTES);
 
-		/* send response */
-		sock->write((char *)&response, sizeof(struct E2E_header));
-
-		return true;
 	}
 
-	return false;
+	/* send response */
+	sock->write((char *)&response, sizeof(struct E2E_header));
+
+	return true;
 }
 
 // ------------------------------------------------------
