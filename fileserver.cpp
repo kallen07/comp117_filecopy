@@ -5,7 +5,7 @@
  * FileCopy Assignment
  * 02/20/2018
  *
- * Purpose: 
+ * Purpose: TODO
  *          
  */
 #include "c150nastydgmsocket.h"
@@ -17,7 +17,7 @@
 #include <unistd.h>
 #include <cstring>                // for errno string formatting
 #include <cerrno>
-#include <iostream>               // for cout
+#include <iostream>               // for cerr
 #include <fstream>                // for input files
 #include <string>
 #include "c150dgmsocket.h"
@@ -28,27 +28,80 @@
 #include "fileutils.h"
 #include "packets.h"
 #include "globals.h"
-//
-// Always use namespace C150NETWORK with COMP 150 IDS framework!
-//
+#include "fileutils.h"
+
+/* Always use namespace C150NETWORK with COMP 150 IDS framework! */
 using namespace C150NETWORK;
 using namespace std;
 
-bool handle_e2e_request(C150DgmSocket *sock, char incomingMessage[], uint8_t type);
+const int TARGET_ARG = 3;      // name of folder in which to copy files
+
+////////////////////////////////////////////////////////////////////////////////
+/*************************** FUNCTION DECLARATIONS ****************************/
+////////////////////////////////////////////////////////////////////////////////
+
+void parse_command_line_args(int argc, char *argv[], int &networknastiness,
+							 int &filenastiness);
+void handle_message_loop(C150DgmSocket *sock, string target_dir, int filenastiness);
+void send_filecopy_init_ack(
+	C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
+	char *curr_filename[MAX_FILENAME_BYTES], uint64_t *curr_fileid, 
+	bool is_duplicate);
+void receive_packet(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
+			   uint32_t curr_fileid, char curr_file_buff[MAX_FILE_BYTES],
+			   uint64_t *curr_file_bytes);
+int is_send_done(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
+		         char curr_filename[MAX_FILENAME_BYTES], 
+  				 uint32_t curr_fileid, string dest_dir,
+  				 char curr_file_buff[MAX_FILE_BYTES], uint64_t curr_file_bytes);
+void send_e2e_hash(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
+				   char *curr_filename[MAX_FILENAME_BYTES], bool is_duplicate);
+void send_e2e_done_ack(
+	C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
+	char *curr_filename[MAX_FILENAME_BYTES], bool is_duplicate);
+
+
 ////////////////////////////////////////////////////////////////////////////////
 /*********************************** MAIN *************************************/
 ////////////////////////////////////////////////////////////////////////////////
 
 int main(int argc, char *argv[])
 {
-	/* Ensure our submission is graded */
-	// GRADEME(argc, argv);
+	GRADEME(argc, argv); 	// Ensure our submission is graded
 
-	int networknastiness;
-	int filenastiness;
-	DIR *TARGET;                   // Unix descriptor for open directory
+	int networknastiness, filenastiness;
+	DIR *TARGET;    // Unix descriptor for open directory
 
+	parse_command_line_args(argc, argv, networknastiness, filenastiness);
+	checkDirectory(argv[3]); 	// Check that the source directory exists
+	TARGET = opendir(argv[3]); 	// Open the source directory
+	if (TARGET == NULL) {
+		fprintf(stderr,"Error opening source directory %s\n", argv[4]);     
+		exit(1);
+	}
 
+	try {
+		/* create socket to listen for message */
+		C150DgmSocket *sock = new C150NastyDgmSocket(networknastiness);
+		/* enter receive and handle message loop */
+		handle_message_loop(sock, argv[TARGET_ARG], filenastiness);
+	} catch (C150NetworkException e) {
+		cerr << argv[0] << ": caught C150NetworkException: " 
+			 << e.formattedExplanation() << endl;
+	}
+	return 0;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/**************************** VERIFY USER INPUT *******************************/
+////////////////////////////////////////////////////////////////////////////////
+
+/* purpose: parse and validate command line arguments
+ *			update caller's networknastiness and filenastiness
+ */
+void parse_command_line_args(int argc, char *argv[], int &networknastiness,
+							 int &filenastiness)
+{
 	/* Check command line and parse arguments */
 	if (argc != 4) {
 		fprintf(stderr,"Correct syntxt is: %s <networknastiness>"
@@ -76,63 +129,179 @@ int main(int argc, char *argv[])
 			    filenastiness);
 		exit(1);
 	}
+}
 
-	/* Check that the source directory exists */
-	checkDirectory(argv[3]);
+////////////////////////////////////////////////////////////////////////////////
+/************************** HANDLE CLIENT REQUESTS ****************************/
+////////////////////////////////////////////////////////////////////////////////
 
-	/* Open the source directory */
-	TARGET = opendir(argv[3]);
-	if (TARGET == NULL) {
-		fprintf(stderr,"Error opening source directory %s\n", argv[4]);     
-		exit(1);
-	}
+/* purpose: recieve and handle client requests
+ * aruguments:
+ * 		sock: socket on which to listen for requests
+ * NEEDSWORK: add support for multiple clients
+ */
+void handle_message_loop(C150DgmSocket *sock, string target_dir, int filenastiness)
+{
+	ssize_t readlen;
+	char buffer[MAX_UDP_MSG_BYTES];
+	bool waiting_for_filedata = false;       // server state
+	bool waiting_for_e2e_results = false;    // server state
+	msg_types type;
+	char curr_filename[MAX_FILENAME_BYTES];
+	uint64_t curr_fileid;
+	// NEEDSWORK should not need to write into a buffer
+	// before writing to disk?
+	char curr_file_buff[MAX_FILE_BYTES];
+	uint64_t curr_file_bytes;
 
-	try {
-		/* socket for listening messages */
-		C150DgmSocket *sock = new C150NastyDgmSocket(networknastiness);
-		ssize_t readlen;
-		char incomingMessage[sizeof(struct filedata)]; // size need to change!!
-		char *buffer = (char *)malloc(7100); // works for data1000
-
-		/* infinite loop processing messages */
-		while (1) {
-			/* read a packet */
-			readlen = sock -> read(incomingMessage, sizeof(incomingMessage));
-			
-			if (readlen == 0) 
-				continue;
-
-			/* cast the first byte to msg_type and handle accordingly */
-			msg_types type = static_cast<msg_types>((uint8_t)incomingMessage[0]);
-			switch ( type ) {
-				case E2E_REQ:
-				case E2E_SUCC:
-				case E2E_FAIL:
-					handle_e2e_request(sock, incomingMessage, type);
-					break;
-				case SEND:
-					break;
-				case SEND_DONE:
-					///////// testing write data100
-					write_file_to_disk(".","result.txt", filenastiness, buffer, 7100);
-					free(buffer);
-					exit(1);
-					///////// tesing write
-					break; 
-				case PACKET:
-					struct filedata pkt;
-					pkt = handle_packets(sock, incomingMessage);
-					packet_to_buffer(buffer, 0, pkt); //testing
-					break;
-				default:
-					fprintf(stderr, "No matching message type.\n");
-			}
-
+	while (1) {
+		/* read a message */
+		readlen = sock -> read(buffer, sizeof(buffer));
+		if (readlen == 0) {
+			/* client closed socket so reset state */
+			waiting_for_filedata = false;
+			waiting_for_e2e_results = false;
+			continue;
 		}
 
+		/* determine message type and handle accordingly */
+		type = static_cast<msg_types>((uint8_t)buffer[0]);
+		switch (type) {
+			case SEND:
+				if (!waiting_for_e2e_results) {
+					send_filecopy_init_ack(sock, buffer, (char **)&curr_filename, 
+										   &curr_fileid, waiting_for_filedata);
+					waiting_for_filedata = true;
+				}
+				break;
+			case PACKET:
+				if (waiting_for_filedata) {
+					receive_packet(sock, buffer, curr_fileid, 
+								   curr_file_buff, &curr_file_bytes);
+				}
+				break;
+			case SEND_DONE:
+				if (waiting_for_filedata) {
 
-	} catch (C150NetworkException e) {
-		cerr << argv[0] << ": caught C150NetworkException: " << e.formattedExplanation() << endl;
+					if (is_send_done(sock, buffer, curr_filename, curr_fileid, 
+									target_dir, curr_file_buff, curr_file_bytes) == 1) {
+						waiting_for_filedata = false;
+					}
+				}
+				break;
+			case E2E_REQ:
+				if (!waiting_for_filedata) {
+					send_e2e_hash(sock, buffer, (char **)&curr_filename,
+								  waiting_for_e2e_results);
+					waiting_for_e2e_results = true;
+				}
+				break;
+			case E2E_SUCC:
+				if (waiting_for_e2e_results) {
+					send_e2e_done_ack(sock, buffer, (char **)&curr_filename,
+									  !waiting_for_e2e_results);
+					waiting_for_e2e_results  = false;
+				}
+				break;
+			case E2E_FAIL:
+				if (waiting_for_e2e_results) {
+					send_e2e_done_ack(sock, buffer, (char **)&curr_filename,
+									  !waiting_for_e2e_results);
+					waiting_for_e2e_results = false;
+				}
+				break;
+			default:
+				fprintf(stderr, "No matching message type %i\n", type);
+		}
+	}
+}
+
+
+void send_filecopy_init_ack(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
+							char *curr_filename[MAX_FILENAME_BYTES], 
+							uint64_t *curr_fileid, bool is_duplicate)
+{
+	bool is_valid_duplicate;
+	struct file_copy_header request;
+
+	memcpy(&request, incoming_msg, sizeof(request));
+	is_valid_duplicate = is_duplicate && request.file_id == *curr_fileid &&
+						 strcmp(request.filename, *curr_filename) == 0;
+	
+	if (!is_duplicate || is_valid_duplicate)
+	{
+		/* construct response */
+		struct file_copy_header response;
+		response.type = SEND_ACK;
+		memcpy(&response.filename, request.filename, MAX_FILENAME_BYTES);
+		response.file_id = request.file_id;
+		bzero(&response.num_packets, sizeof(response.num_packets));
+
+		/* write response */
+		sock -> write((char *)&response, sizeof(response));
+
+		/* Update server state */
+		memcpy(curr_filename, request.filename, MAX_FILENAME_BYTES);
+		*curr_fileid = request.file_id;
+	}
+}
+
+void receive_packet(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
+			   uint32_t curr_fileid, char curr_file_buff[MAX_FILE_BYTES],
+			   uint64_t *curr_file_bytes)
+{
+	struct filedata packet;
+
+	memcpy(&packet, incoming_msg, sizeof(packet));
+
+	/* write the data in the packet */
+	if (packet.file_id == curr_fileid) {
+		memcpy(&(curr_file_buff[packet.start_byte]), &(packet.data), packet.data_len);
+		*curr_file_bytes = packet.start_byte + packet.data_len;
+	}
+
+	/* send an ack */
+	struct filedata_ack response;
+	response.type = PACKET_ACK;
+	response.file_id = curr_fileid;
+	response.start_byte = packet.start_byte;
+
+	/* write response */
+	sock -> write((char *)&response, sizeof(response));
+}
+
+int is_send_done(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
+		         char curr_filename[MAX_FILENAME_BYTES], 
+  				 uint32_t curr_fileid, string dest_dir,
+  				 char curr_file_buff[MAX_FILE_BYTES], uint64_t curr_file_bytes)
+{
+	struct file_copy_header request;
+	int bytes_written;
+
+	memcpy(&request, incoming_msg, sizeof(request));
+
+	if (request.file_id == curr_fileid) {
+
+		/* write buffer to disk */
+		string dst_name = makeFileName(dest_dir, curr_filename);
+		FILE *fp = fopen(dst_name.c_str(), "w+");
+		bytes_written = fwrite(curr_file_buff, 1, curr_file_bytes, fp);
+		if (bytes_written <= 0) {
+			fprintf(stderr, "unable to write to disk on server side\n");
+			exit(1);
+		}
+
+		/* construct response */
+		struct file_copy_header response;
+		response.type = DONE_ACK;
+		memcpy(&response.filename, request.filename, MAX_FILENAME_BYTES);
+		response.file_id = request.file_id;
+		bzero(&response.num_packets, sizeof(response.num_packets));
+
+		/* write response */
+		sock -> write((char *)&response, sizeof(response));
+		
+		return 1;
 	}
 
 	return 0;
@@ -142,62 +311,88 @@ int main(int argc, char *argv[])
 
 /* arguments:
  * 		sock: socket
- *		incomingMessage: incoming message buffer
- *		type: type of the message received from the client
+ *		buffer: incoming message buffer
  * returns :
  * 		true: if the incoming message is processed and response is returned
  * 		false: otherwise
  */
-bool handle_e2e_request(C150DgmSocket *sock, char incomingMessage[], uint8_t type)
+// TODO update comments
+void send_e2e_hash(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
+				   char *curr_filename[MAX_FILENAME_BYTES], bool is_duplicate)
 {
-	// NEEDSWORK: grading logs dont seem to be logging all msgs
-	//			  rename file to remove .tmp if check success
+	struct e2e_header request;
+	struct e2e_header response;
 
-	/* initalize request and response e2e_header */
-	struct E2E_header request;
-	struct E2E_header response;
+	memcpy((char *)&request, incoming_msg, sizeof(request));
 
-	memcpy((char *)&request, incomingMessage, sizeof(struct E2E_header));
-	char *fname = request.filename;
-
-	if (type == E2E_REQ) {
-
-		/* print to grading log */
-		*GRADING << "File: " << fname << " received, beginning end-to-end check\n";
-		
-		/* compute the hash on the server side */
-		unsigned char hash[MAX_SHA1_BYTES];
-		compute_file_hash(fname, hash);
-
-		/* construct response header */
-		response.type = E2E_HASH;
-		strcpy(response.filename, fname);
-		for (int i=0; i<MAX_SHA1_BYTES; i++)
-			response.hash[i] = hash[i];
-
-
-	} else if ( type == E2E_SUCC || type == E2E_FAIL ) {
-
-		/* print to grading log and console */
-		if (type == E2E_SUCC) {
-			printf("File %s copied successfully\n", fname);
-			*GRADING << "File: " << fname << " end-to-end check succeeded\n";
-		} else {
-			*GRADING << "File: " << fname << " end-to-end check failed\n";		
-		}
-
-		/* construct response header */
-		response.type = E2E_DONE;
-		strcpy(response.filename, fname);
-		bzero(response.hash, MAX_SHA1_BYTES);
-
+	/* if we already sent a hash without recieving a success/fail 
+	   confirmation from the server, then don't handle new request.
+	   also, ignore stale requests */
+	if (is_duplicate && strcmp(*curr_filename, request.filename) != 0)
+	{
+		return;
 	}
 
-	/* send response */
-	sock->write((char *)&response, sizeof(struct E2E_header));
+	/* print to grading log */
+	cerr << "File: " << request.filename
+			 << " received, beginning end-to-end check" << endl;
+	
+	/* compute the hash*/
+	ifstream *t;
+	stringstream *buffer;
+	unsigned char hash[MAX_SHA1_BYTES];
+	t = new ifstream(request.filename);
+	buffer = new stringstream;
+	*buffer << t->rdbuf();
+	SHA1((const unsigned char*)buffer->str().c_str(), 
+		(buffer->str()).length(), hash);
+	delete t;
+	delete buffer;
 
-	return true;
+	/* construct and send hash */
+	response.type = E2E_HASH;
+	strcpy(response.filename, request.filename);	
+	memcpy(&response.hash, &hash, MAX_SHA1_BYTES);	
+	sock->write((char *)&response, sizeof(struct e2e_header));
+
+	/* update state */
+	memcpy(curr_filename, request.filename, MAX_FILENAME_BYTES);
 }
 
+void send_e2e_done_ack(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
+					   char *curr_filename[MAX_FILENAME_BYTES], bool is_duplicate)
+{
+	bool is_valid_duplicate;
+	struct e2e_header request;
+	char fname[MAX_FILENAME_BYTES];
+
+	memcpy(&request, incoming_msg, sizeof(request));
+	memcpy(fname, request.filename, MAX_FILENAME_BYTES);
+
+	is_valid_duplicate = is_duplicate && strcmp(fname, *curr_filename) == 0;
+
+	// NEEDSWORK: if the file check succeeded, change the name of the file
+
+	if (!is_duplicate || is_valid_duplicate)
+	{
+		/* construct response */
+		struct e2e_header response;
+		response.type = E2E_DONE;
+		memcpy(&response.filename, fname, MAX_FILENAME_BYTES);
+		bzero(&response.hash, sizeof(response.hash));
+
+		/* write response */
+		sock -> write((char *)&response, sizeof(response));
+		fprintf(stderr, "sent e2e_done ack for file: %s\n", fname);
+
+		/* print to grading log and console */
+		if (request.type == E2E_SUCC) {
+			printf("File %s passed end_to_end check\n", fname);
+			cerr << "File: " << fname << " end-to-end check succeeded\n" << endl;
+		} else {
+			cerr << "File: " << fname << " end-to-end check failed\n" << endl;			
+		}
+	}
+}
 
 

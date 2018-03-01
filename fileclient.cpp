@@ -5,8 +5,7 @@
  * FileCopy Assignment
  * 02/19/2018
  *
- * Purpose: 
- *	File Nastiness works up to level 3
+ * Purpose: Copies a directory of files to some server.
  *          
  */
 #include "c150nastydgmsocket.h"
@@ -26,31 +25,42 @@
 #include <cstdlib>
 #include <sstream>
 #include <stdio.h>
+
 #include "fileutils.h"
 #include "globals.h"
 #include "packets.h"
-//
-// Always use namespace C150NETWORK with COMP 150 IDS framework!
-//
+
+/* Always use namespace C150NETWORK with COMP 150 IDS framework! */
 using namespace C150NETWORK;
 using namespace std;
 
 const int SERVERARG = 1;
+const int SRC_ARG = 4;       // name of source file
 const int TIMEOUT = 2000;    // in milliseconds
 
 
-/* NEEDSWORK: 
- * 1) move all e2e related funcs to a new e2e.cpp/e2e.h
- * 2) update e2e with retry logic, failure handling
- * 3) log grademe events
- */
 
+////////////////////////////////////////////////////////////////////////////////
+/*************************** FUNCTION DECLARATIONS ****************************/
+////////////////////////////////////////////////////////////////////////////////
+
+void check_dir(char *dirname);
+bool is_file(string fname);
+void parse_command_line_args(int argc, char *argv[], int &networknastiness,
+							 int &filenastiness);
+bool copy_file(C150DgmSocket *sockfd, string src_dir, string fname, 
+			   uint32_t file_id, int filenastiness);
+void init_filecopy(C150DgmSocket *sockfd, char fname[MAX_FILENAME_BYTES], 
+				   uint32_t file_id);
+void send_packets(C150DgmSocket *sockfd, string src_dir, string fname,
+				  uint32_t file_id, int filenastiness);
+void finish_filecopy(C150DgmSocket *sockfd, string fname, uint32_t file_id);
 bool end_to_end_check(C150DgmSocket *sockfd, string fname);
-void send_e2e_message(char *message_to_send, int res_type, char* filename,
-					  struct E2E_header *response, C150DgmSocket *sockfd);
+bool send_e2e_message(char *message_to_send, int res_type, char* filename,
+					  struct e2e_header *response, C150DgmSocket *sockfd);
 bool get_e2e_response(char *incoming_msg_buffer, int type, char * curr_file,
-					  struct E2E_header *response);
-bool compute_and_compare_hash(char *filename, struct E2E_header *hash_msg);
+					  struct e2e_header *response);
+bool compute_and_compare_hash(char *filename, struct e2e_header *hash_msg);
 
 void send_done_message(C150DgmSocket *sock, uint32_t f_id);
 void send_filecopy_request(C150DgmSocket *sock, uint32_t f_id, char *fname, int num_pkts);
@@ -62,17 +72,75 @@ void send_file_message(C150DgmSocket *sock, char *request, int response_type, ui
 
 int main(int argc, char *argv[])
 {
-	/* Ensure our submission is graded */
-	// GRADEME(argc, argv);
 
-	int networknastiness;
-	int filenastiness;
-	string server;
-	DIR *SRC;                   // Unix descriptor for open directory
+	GRADEME(argc, argv); // Ensure our submission is graded
+
+	int networknastiness, filenastiness;
 	struct dirent *sourceFile;  // Directory entry for source file
+	DIR *SRC;            // Unix descriptor for open directory
+	int num_files = 0;
 
-	
-	/* Check command line and parse arguments */
+	parse_command_line_args(argc, argv, networknastiness, filenastiness);
+
+	checkDirectory(argv[SRC_ARG]); 	  // Check that the source directory exists
+	SRC = opendir(argv[SRC_ARG]);     // Open the source directory
+	if (SRC == NULL) {
+		fprintf(stderr,"Error opening source directory %s\n", argv[4]);     
+		exit(1);
+	}
+
+	/* Create socket to connect to the server */
+	C150DgmSocket *sock = new C150NastyDgmSocket(networknastiness);
+	sock->setServerName(argv[SERVERARG]);
+	sock->turnOnTimeouts(TIMEOUT);
+
+	/* Copy each file, report error if unable */
+	while ((sourceFile = readdir(SRC)) != NULL) {
+		/* skip any non-regular files */
+		if ((strcmp(sourceFile->d_name, ".") == 0) ||
+			(strcmp(sourceFile->d_name, "..")  == 0) ||
+			isFile(makeFileName(argv[SRC_ARG], sourceFile->d_name)) == false)
+			continue;
+
+		try {
+			num_files += 1;
+			bool success = copy_file(sock, argv[SRC_ARG], sourceFile->d_name, 
+									 num_files, filenastiness);
+			if (!success) {
+				cerr << "Unable to copy file " << sourceFile->d_name 
+						<<  " after " << per_file_retries << " tries" << endl;
+			}
+  		} catch (C150Exception e) {
+			char *exception = (char *)(e.formattedExplanation()).c_str();
+			// report network and disk failures
+			if (strcmp(exception, DISK_ERROR.c_str()) || 
+				strcmp(exception, NETWORK_ERROR.c_str())) {
+				cerr << "Unrecoverable disk or network failure, exiting\n"
+						 << endl;
+				exit(1);
+			// report other failures
+		    } else {
+		    	// TODO do not replace this with * GRADING
+				fprintf(stderr, "Caught C150Exception: %s", exception);
+		    }
+  		}
+	}
+
+	closedir(SRC);
+	return 0;
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+/**************************** VERIFY USER INPUT *******************************/
+////////////////////////////////////////////////////////////////////////////////
+
+/* purpose: parse and validate command line arguments
+ *			update caller's networknastiness and filenastiness
+ */
+void parse_command_line_args(int argc, char *argv[], int &networknastiness,
+							 int &filenastiness)
+{
 	if (argc != 5) {
 		fprintf(stderr,"Correct syntxt is: %s <server> <networknastiness>"
 					   "<filenastiness> <SRC dir>\n", argv[0]);
@@ -99,69 +167,213 @@ int main(int argc, char *argv[])
 			    filenastiness);
 		exit(1);
 	}
-
-	/* Check that the source directory exists */
-	checkDirectory(argv[4]);
-
-	/* Open the source directory */
-	SRC = opendir(argv[4]);
-	if (SRC == NULL) {
-		fprintf(stderr,"Error opening source directory %s\n", argv[4]);     
-		exit(1);
-	}
-
-	try {
-		/* Create socket to connect to the server */
-		C150DgmSocket *sock = new C150NastyDgmSocket(networknastiness);
-		sock->setServerName(argv[SERVERARG]);
-		sock->turnOnTimeouts(TIMEOUT);
-
-		int file_count = 0;
-		//
-		//  Loop copying the files
-		//
-		//    copyfile takes name of target file
-		//
-		while ((sourceFile = readdir(SRC)) != NULL) {
-			// skip the . and .. names
-			if ((strcmp(sourceFile->d_name, ".") == 0) ||
-				(strcmp(sourceFile->d_name, "..")  == 0 )) 
-				continue;
-
-		
-			// read file to copy from disk
-			size_t file_size = get_source_size(argv[4], sourceFile->d_name);
-			char *buffer = (char *)malloc(file_size);
-			read_file_from_disk(argv[4], sourceFile->d_name, filenastiness, buffer);
-			cout << "Read file " << sourceFile->d_name << " success." << endl;
-
-			send_file_packets(sock, buffer, file_size, file_count);
-			cout << "Send file " << sourceFile->d_name << " success." << endl;
-
-			send_done_message(sock, (uint32_t)file_count);
-			// ///////// testing writes
-			// string testdir = "./test";
-			// write_file_to_disk(testdir, sourceFile->d_name, filenastiness, buffer, file_size);
-			// cout << "Write file " << sourceFile->d_name << " success \n" << endl;
-
-			free(buffer);
-			//////// testing
-
-			// end_to_end_check(sock, sourceFile->d_name);
-
-			file_count++; // increment file_index
-		
-		}
-
-	} catch (C150NetworkException e) {
-       cerr << argv[0] << ": caught C150NetworkException: " 
-                       << e.formattedExplanation() << endl;
-     }
-
-	closedir(SRC);
-	return 0;
 }
 
+
+////////////////////////////////////////////////////////////////////////////////
+/******************************** SEND FILE ***********************************/
+////////////////////////////////////////////////////////////////////////////////
+
+/* purpose: reliably copy a single file.
+ * arguments:
+ *		sockfd: socket file descriptor for the server
+ * 		src_dir: directory from which the file originates
+ * 		fname: name of the file to copy
+ * 		file_id: id of file to copy
+ * 		filenastiness: nastiness to use for disk read/write
+ * returns:
+ * 		true if the file copy succeeded
+ * 		false if they filecopy failed after the globally determined 
+ * 			number of retries
+ */
+bool copy_file(C150DgmSocket *sockfd, string src_dir, string fname, 
+			   uint32_t file_id, int filenastiness)
+{
+	bool copy_success;
+
+	for (int retries = 0; retries < per_file_retries; retries++) {
+		cerr << "File: " << fname 
+				 << " beginnning transmission, attempt" << retries + 1 << endl;
+		init_filecopy(sockfd, (char *)fname.c_str(), file_id);
+		send_packets(sockfd, src_dir, fname, file_id, filenastiness);
+		finish_filecopy(sockfd, fname, file_id);
+		cerr << "File: " << fname << " transmission complete, waiting for "
+				 << "end-to-end check, attempt " << retries + 1  << endl;
+		copy_success = end_to_end_check(sockfd, fname);
+		if (copy_success) {
+			cerr << "File: " << fname 
+					 << " end-to-end check suceeded, attempt " 
+					 << retries + 1  << endl;
+			return true;
+		} else {
+			cerr << "File: " << fname 
+					 << " end-to-end check failed, attempt " 
+					 << retries + 1  << endl;
+		}
+	}
+
+	return false;
+}
+
+/* purpose: notify the server that we are about to begin the filecopy process
+ * 			and wait for an acknowledgement from the server
+ * arguments:
+ *		sockfd: socket file descriptor for the server
+ * 		fname: name of the file to copy
+ * 		file_id: id of file to copy
+ */
+void init_filecopy(C150DgmSocket *sockfd, char fname[MAX_FILENAME_BYTES], 
+				   uint32_t file_id)
+{
+	/* create file copy request msg */
+	struct file_copy_header init_msg;
+	init_msg.type = SEND;
+	strcpy(init_msg.filename, fname);
+	init_msg.file_id = file_id;
+	init_msg.num_packets = 20; // NEEDSWORK this is wrong
+
+	/* send msg */
+	sockfd->write((char *)&init_msg, sizeof(init_msg));
+
+	/* wait for ack */
+	char buffer[MAX_UDP_MSG_BYTES];
+	int readlen = sockfd->read(buffer, sizeof(buffer));
+	if (readlen == 0) {
+		fprintf(stderr, "server closed the connection\n");
+		exit(1);  // TODO THROW ERROR here
+	}
+
+	/* parse response */
+	struct file_copy_header init_ack;
+	memcpy(&init_ack, buffer, sizeof(init_ack));
+	if (init_ack.type == SEND_ACK &&
+		init_ack.file_id == file_id) {
+		fprintf(stderr, "recieved a filesend initalization ack for file %s\n",
+			    fname);
+	} else {
+		// NEEDSWORK retry logic
+		fprintf(stderr, "didn't receive ack for filesend initization for file %s\n",
+				fname);
+		exit(1);
+	}
+}
+
+
+/* purpose: send a file to the server
+ * arguments:
+ *		sockfd: socket file descriptor for the server
+ * 		src_dir: directory from which the file originates
+ * 		fname: name of the file to copy
+ * 		file_id: id of file to copy
+ * 		filenastiness: nastiness to use for disk read/write
+ */
+void send_packets(C150DgmSocket *sockfd, string src_dir, string fname,
+				  uint32_t file_id, int filenastiness)
+{
+	char file[MAX_FILE_BYTES];
+	int bytes_in_file;
+	int i;
+	int num_packets;
+
+	string src_name = makeFileName(src_dir, fname);
+	FILE *fp = fopen(src_name.c_str(), "rb");
+	bytes_in_file = fread(file, 1, MAX_FILE_BYTES, fp);
+
+	//bytes_in_file = read_file_from_disk(src_dir, fname, filenastiness, 
+	//									file, MAX_FILE_BYTES);
+
+	// determine how many packets we'll need to send
+	if (bytes_in_file % MAX_DATA_BYTES == 0) {
+		num_packets = bytes_in_file/MAX_DATA_BYTES;
+	} else {
+		num_packets = bytes_in_file/MAX_DATA_BYTES + 1;
+	}
+
+	// send packets, one at a time
+	for(i = 0; i < num_packets; i++) {
+
+		int start_byte = MAX_DATA_BYTES * i;
+		/* create file copy data msg */
+		struct filedata msg;
+		if (i + 1 == num_packets) {
+			/* at the last message
+			   so may not need to copy the maximum number of bytes */
+			msg.type = PACKET;
+			msg.file_id = file_id;
+			msg.start_byte = start_byte;
+			msg.data_len = bytes_in_file - start_byte;
+			memcpy(msg.data, &(file[start_byte]), 
+				   bytes_in_file - start_byte);
+		} else {
+			msg.type = PACKET;
+			msg.file_id = file_id;
+			msg.start_byte = start_byte;
+			msg.data_len = MAX_DATA_BYTES;
+			memcpy(msg.data, (char *)&(file[start_byte]), MAX_DATA_BYTES);
+		}
+	
+		/* send msg */
+		sockfd->write((char *)&msg, sizeof(msg));
+
+		/* wait for ack */
+		char buffer[MAX_UDP_MSG_BYTES];
+		int readlen = sockfd->read(buffer, sizeof(buffer));
+		if (readlen == 0) {
+			fprintf(stderr, "server closed the connection\n");
+			exit(1);  // TODO THROW ERROR here
+		}
+
+		/* parse response */
+		struct filedata_ack ack;
+		memcpy(&ack, buffer, sizeof(ack));
+		if (ack.type != PACKET_ACK || ack.file_id != file_id) {
+			// NEEDSWORK retry logic
+			fprintf(stderr, "didn't receive ack a data packet in file %s\n", fname.c_str());
+			exit(1);
+		}
+	}
+
+	fprintf(stderr, "recieved all acks for filedata for file %s\n", fname.c_str());
+
+
+}
+
+void finish_filecopy(C150DgmSocket *sockfd, string fname, uint32_t file_id)
+{
+	/* create msg */
+	struct file_copy_header done_msg;
+	done_msg.type = SEND_DONE;
+	strcpy(done_msg.filename, fname.c_str());
+	done_msg.file_id = file_id;
+	done_msg.num_packets = 0; // this value is not neccessary here
+
+	/* send msg */
+	sockfd->write((char *)&done_msg, sizeof(done_msg));
+
+	/* wait for ack */
+	char buffer[MAX_UDP_MSG_BYTES];
+	int readlen = sockfd->read(buffer, sizeof(buffer));
+	if (readlen == 0) {
+		fprintf(stderr, "server closed the connection\n");
+		exit(1);  // TODO THROW ERROR here
+	}
+
+	/* parse response */
+	struct file_copy_header done_ack;
+	memcpy(&done_ack, buffer, sizeof(done_ack));
+	if (done_ack.type == DONE_ACK &&
+		done_ack.file_id == file_id) {
+		fprintf(stderr, "recieved a filesend done ack for file %s\n", fname.c_str());
+	} else {
+		// NEEDSWORK retry logic
+		fprintf(stderr, "didn't receive ack for filesend done for file %s\n", fname.c_str());
+		exit(1);
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/****************************** VALIDATE FILE *********************************/
+////////////////////////////////////////////////////////////////////////////////
 
 void send_filecopy_request(C150DgmSocket *sock, uint32_t f_id, char *fname, int num_pkts)
 {
@@ -248,20 +460,20 @@ bool end_to_end_check(C150DgmSocket *sockfd, string fname)
 	int attempt = 1; // e2e attempt set to 1
 	
 	/* create end to end check request msg */
-	struct E2E_header e2e_req;
+	struct e2e_header e2e_req;
 	e2e_req.type = E2E_REQ;
 	strcpy(e2e_req.filename, fname.c_str());
 	bzero(e2e_req.hash, MAX_SHA1_BYTES);
 
 	/* get hash response from the server */
-	struct E2E_header hash_msg;
+	struct e2e_header hash_msg;
 	send_e2e_message((char *)&e2e_req, E2E_HASH, e2e_req.filename, &hash_msg, sockfd);
 
 	/* compare client and server hash result */
 	bool hash_match = compute_and_compare_hash(e2e_req.filename, &hash_msg);
 
 	/* process hash result from the server */
-	struct E2E_header hash_result_msg;
+	struct e2e_header hash_result_msg;
 	strcpy(hash_result_msg.filename, fname.c_str());
 	bzero(hash_result_msg.hash, MAX_SHA1_BYTES);
 
@@ -271,17 +483,17 @@ bool end_to_end_check(C150DgmSocket *sockfd, string fname)
 		printf("File %s end-to-end check SUCCEEDS -- informing server\n", fname.c_str()); 
 
 		// NEEDWORK: finalize grading logs, add attempt counter
-		*GRADING << "File: " << fname 
+		cerr << "File: " << fname 
 				 << " end-to-end check succeeded, attempt " << attempt << endl;
 	} else {
 		hash_result_msg.type = E2E_FAIL;
 		printf("File %s end-to-end check FAILS -- giving up\n", fname.c_str());
-		*GRADING << "File: " << fname 
+		cerr << "File: " << fname 
 				 << " end-to-end check failed, attempt " << attempt << endl;
 	}
 
 	// send a sucess/fail message
-	struct E2E_header done_msg;
+	struct e2e_header done_msg;
 	send_e2e_message((char*)&hash_result_msg, E2E_DONE, 
 					e2e_req.filename, &done_msg, sockfd);
 
@@ -299,48 +511,43 @@ bool end_to_end_check(C150DgmSocket *sockfd, string fname)
  *		received 
  * 		false: otherwise
  */
-void send_e2e_message(char *message_to_send, int res_type, char* filename,
-					  struct E2E_header *response, C150DgmSocket *sockfd)
+bool send_e2e_message(char *message_to_send, int res_type, char* filename,
+					  struct e2e_header *response, C150DgmSocket *sockfd)
 {	
-
 	ssize_t readlen;
-	char incomingMessage[sizeof(struct E2E_header)];
+	char incomingMessage[sizeof(struct e2e_header)];
 	bool got_hash;
 	int attempt = 0;
 	
-	do {
+	for (int i = 0; i < NETWORK_RETRIES; i++) {
 		/* send end to end check request msg */
-		sockfd->write(message_to_send, sizeof(struct E2E_header));
+		sockfd->write(message_to_send, sizeof(struct e2e_header));
 
 		/* wait for response */
 		readlen = sockfd->read(incomingMessage, sizeof(incomingMessage));
+		if (readlen < 0) {
+			fprintf(stderr, "ERROR: server closed the socket\n");
+			exit(1);
+		}
 		got_hash = get_e2e_response(incomingMessage, res_type, filename, response);
-		if (got_hash) break;
+		if (got_hash) return true;
 
 		/* keep reading messages until timedout */
 		while (sockfd->timedout() == false) {
 			readlen = sockfd->read(incomingMessage, sizeof(incomingMessage));
 
 			if (readlen < 0) {
-				fprintf(stderr, "ERROR: server closed the socket");
+				fprintf(stderr, "ERROR: server closed the socket\n");
+				exit(1);
 			}
 
 			got_hash = get_e2e_response(incomingMessage, res_type, 
 										filename, response);
-			if (got_hash) break;
+			if (got_hash) return true;
 		}
+	}
 
-		if (got_hash) break;
-
-		if ( sockfd->timedout() ) 
-			attempt++;
-
-	// NEEDSWORK should we limit the number of tries?
-	} while ( attempt < MSG_MAX_RETRY );
-
-	if ( attempt == MSG_MAX_RETRY )
-		throw C150NetworkException("Fail to send message after max retries.");
-
+	return false;
 }
 
 /* arguments:
@@ -355,7 +562,7 @@ void send_e2e_message(char *message_to_send, int res_type, char* filename,
  * 		false: otherwise
  */
 bool get_e2e_response(char *incoming_msg_buffer, int type, char * curr_file,
-					  struct E2E_header *response)
+					  struct e2e_header *response)
 {
 	if ((uint8_t)incoming_msg_buffer[0] == type) {
 		memcpy(response, incoming_msg_buffer, sizeof(*response));
@@ -375,8 +582,7 @@ bool get_e2e_response(char *incoming_msg_buffer, int type, char * curr_file,
  *		true: if the hashes match and the file copied successfully
  *		false: otherwise
  */
-
-bool compute_and_compare_hash(char *filename, struct E2E_header *hash_msg){
+bool compute_and_compare_hash(char *filename, struct e2e_header *hash_msg){
 	/* compute the hash on the client side */
 	unsigned char hash[MAX_SHA1_BYTES];
 	bool hash_match = true;
@@ -388,8 +594,4 @@ bool compute_and_compare_hash(char *filename, struct E2E_header *hash_msg){
 			return false;
 
 	return hash_match;
-
 }
-
-
-
