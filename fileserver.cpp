@@ -25,7 +25,8 @@
 #include <cstdlib>
 #include <sstream>
 #include <stdio.h>
-
+#include "fileutils.h"
+#include "packets.h"
 #include "globals.h"
 //
 // Always use namespace C150NETWORK with COMP 150 IDS framework!
@@ -33,10 +34,7 @@
 using namespace C150NETWORK;
 using namespace std;
 
-void checkDirectory(char *dirname);
-bool isFile(string fname);
 bool handle_e2e_request(C150DgmSocket *sock, char incomingMessage[], uint8_t type);
-
 ////////////////////////////////////////////////////////////////////////////////
 /*********************************** MAIN *************************************/
 ////////////////////////////////////////////////////////////////////////////////
@@ -44,14 +42,12 @@ bool handle_e2e_request(C150DgmSocket *sock, char incomingMessage[], uint8_t typ
 int main(int argc, char *argv[])
 {
 	/* Ensure our submission is graded */
-	GRADEME(argc, argv);
+	// GRADEME(argc, argv);
 
 	int networknastiness;
 	int filenastiness;
 	DIR *TARGET;                   // Unix descriptor for open directory
 
-	ssize_t readlen;
-	char incomingMessage[sizeof(struct E2E_header)];
 
 	/* Check command line and parse arguments */
 	if (argc != 4) {
@@ -94,6 +90,9 @@ int main(int argc, char *argv[])
 	try {
 		/* socket for listening messages */
 		C150DgmSocket *sock = new C150NastyDgmSocket(networknastiness);
+		ssize_t readlen;
+		char incomingMessage[sizeof(struct filedata)]; // size need to change!!
+		char *buffer = (char *)malloc(7100); // works for data1000
 
 		/* infinite loop processing messages */
 		while (1) {
@@ -105,7 +104,6 @@ int main(int argc, char *argv[])
 
 			/* cast the first byte to msg_type and handle accordingly */
 			msg_types type = static_cast<msg_types>((uint8_t)incomingMessage[0]);
-
 			switch ( type ) {
 				case E2E_REQ:
 				case E2E_SUCC:
@@ -113,9 +111,18 @@ int main(int argc, char *argv[])
 					handle_e2e_request(sock, incomingMessage, type);
 					break;
 				case SEND:
+					break;
 				case SEND_DONE:
-					break; // filecopy: to be implement
+					///////// testing write data100
+					write_file_to_disk(".","result.txt", filenastiness, buffer, 7100);
+					free(buffer);
+					exit(1);
+					///////// tesing write
+					break; 
 				case PACKET:
+					struct filedata pkt;
+					pkt = handle_packets(sock, incomingMessage);
+					packet_to_buffer(buffer, 0, pkt); //testing
 					break;
 				default:
 					fprintf(stderr, "No matching message type.\n");
@@ -123,12 +130,14 @@ int main(int argc, char *argv[])
 
 		}
 
+
 	} catch (C150NetworkException e) {
 		cerr << argv[0] << ": caught C150NetworkException: " << e.formattedExplanation() << endl;
 	}
 
 	return 0;
 }
+
 
 
 /* arguments:
@@ -148,7 +157,7 @@ bool handle_e2e_request(C150DgmSocket *sock, char incomingMessage[], uint8_t typ
 	struct E2E_header request;
 	struct E2E_header response;
 
-	memcpy((char *)&request, incomingMessage, sizeof(request));
+	memcpy((char *)&request, incomingMessage, sizeof(struct E2E_header));
 	char *fname = request.filename;
 
 	if (type == E2E_REQ) {
@@ -157,21 +166,12 @@ bool handle_e2e_request(C150DgmSocket *sock, char incomingMessage[], uint8_t typ
 		*GRADING << "File: " << fname << " received, beginning end-to-end check\n";
 		
 		/* compute the hash on the server side */
-		ifstream *t;
-		stringstream *buffer;
 		unsigned char hash[MAX_SHA1_BYTES];
-
-		t = new ifstream(request.filename);
-		buffer = new stringstream;
-		*buffer << t->rdbuf();
-		SHA1((const unsigned char*)buffer->str().c_str(), 
-			(buffer->str()).length(), hash);
-		delete t;
-		delete buffer;
+		compute_file_hash(fname, hash);
 
 		/* construct response header */
 		response.type = E2E_HASH;
-		strcpy(response.filename, request.filename);		
+		strcpy(response.filename, fname);
 		for (int i=0; i<MAX_SHA1_BYTES; i++)
 			response.hash[i] = hash[i];
 
@@ -183,12 +183,12 @@ bool handle_e2e_request(C150DgmSocket *sock, char incomingMessage[], uint8_t typ
 			printf("File %s copied successfully\n", fname);
 			*GRADING << "File: " << fname << " end-to-end check succeeded\n";
 		} else {
-			*GRADING << "File: " << fname << " end-to-end check failed\n";			
+			*GRADING << "File: " << fname << " end-to-end check failed\n";		
 		}
 
 		/* construct response header */
 		response.type = E2E_DONE;
-		strcpy(response.filename, request.filename);
+		strcpy(response.filename, fname);
 		bzero(response.hash, MAX_SHA1_BYTES);
 
 	}
@@ -199,48 +199,5 @@ bool handle_e2e_request(C150DgmSocket *sock, char incomingMessage[], uint8_t typ
 	return true;
 }
 
-// ------------------------------------------------------
-//
-//                   checkDirectory
-//
-//  Make sure directory exists
-//     
-// ------------------------------------------------------
-
-void checkDirectory(char *dirname) {
-	struct stat statbuf;  
-	if (lstat(dirname, &statbuf) != 0) {
-		fprintf(stderr,"Error: directory %s does not exist\n", dirname);
-		exit(1);
-	}
-
-	if (!S_ISDIR(statbuf.st_mode)) {
-		fprintf(stderr,"File %s exists but is not a directory\n", dirname);
-		exit(1);
-	}
-}
 
 
-// ------------------------------------------------------
-//
-//                   isFile
-//
-//  Make sure the supplied file is not a directory or
-//  other non-regular file.
-//     
-// ------------------------------------------------------
-
-bool isFile(string fname) {
-	const char *filename = fname.c_str();
-	struct stat statbuf;  
-	if (lstat(filename, &statbuf) != 0) {
-		fprintf(stderr,"isFile: Error stating supplied source file %s\n", filename);
-		return false;
-	}
-
-	if (!S_ISREG(statbuf.st_mode)) {
-		fprintf(stderr,"isFile: %s exists but is not a regular file\n", filename);
-		return false;
-	}
-	return true;
-}

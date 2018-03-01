@@ -74,13 +74,13 @@ all: fileclient fileserver
 # Build fileclient
 # 
 fileclient: fileclient.cpp fileutils.cpp $(C150AR) $(INCLUDES)
-	$(CPP) -o fileclient $(CPPFLAGS) fileclient.cpp fileutils.cpp -lssl -lcrypto $(C150AR)
+	$(CPP) -o fileclient $(CPPFLAGS) fileclient.cpp fileutils.cpp packets.cpp -lssl -lcrypto $(C150AR)
 
 #
 # Build fileserver
 #
 fileserver: fileserver.cpp fileutils.cpp $(C150AR) $(INCLUDES)
-	$(CPP) -o fileserver $(CPPFLAGS) fileserver.cpp fileutils.cpp -lssl -lcrypto $(C150AR)
+	$(CPP) -o fileserver $(CPPFLAGS) fileserver.cpp fileutils.cpp packets.cpp -lssl -lcrypto $(C150AR)
 
 #
 # To get any .o, compile the corresponding .cpp

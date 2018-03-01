@@ -13,6 +13,7 @@
 #include <sstream>
 #include <stdio.h>
 #include <openssl/sha.h>
+#include "globals.h"
 
 //
 // Always use namespace C150NETWORK with COMP 150 IDS framework!
@@ -23,6 +24,7 @@ bool isFile(string fname);
 void checkDirectory(char *dirname);
 string makeFileName(string dir, string name);
 void compute_file_hash(char *filename, unsigned char *hash);
-void read_file_from_disk(string src, string filename, int nastiness, char* buffer, size_t sourceSize);
+void read_file_from_disk(string src, string filename, int nastiness, char* buffer);
 void write_file_to_disk(string target, string filename, int nastiness, char* buffer, size_t sourceSize);
 size_t get_source_size(string src, string filename);
+void read_buffer_safe(string src_name, int nastiness, char* buffer, size_t sourceSize);

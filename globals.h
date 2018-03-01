@@ -16,6 +16,10 @@
 #define MAX_DATA_BYTES 400
 #define MAX_SHA1_BYTES 20
 #define MSG_TYPE_BYTES 1
+#define NUM_READ_BUFFER 10
+#define PKT_WINDOW_SIZE 4
+#define PKT_MAX_RETRY 6
+#define MSG_MAX_RETRY 6
 
 struct __attribute__((__packed__)) file_copy_header {
 	uint8_t type;

@@ -1,10 +1,12 @@
 #include "fileutils.h"
+
 // ------------------------------------------------------
 //
 //                   compute_file_hash
 //
-// Compute SHA1 hash of the given file, make sure buffer
-// reads the same
+// Compute SHA1 hash of the given nastyfile. To make sure buffer
+// reads the same, it loops reading to buffers until two 
+// buffers are consistent.
 //
 // ------------------------------------------------------
 
@@ -31,9 +33,9 @@ void compute_file_hash(char *filename, unsigned char *hash) {
 
 // ------------------------------------------------------
 //
-//                   copyFile
+//                   get_source_size
 //
-// Copy a single file from sourcdir to target dir
+// Return the size of the file in number of bytes
 //
 // ------------------------------------------------------
 
@@ -60,25 +62,71 @@ size_t get_source_size(string src, string filename) {
 
 }
 
+
 // ------------------------------------------------------
 //
-//                   is_same_file
-// 
-// used for comparing file buffers
-// returns true if two c strs have the same [file_len] chararcters
+//                   read_buffer_safe
+//
+// Read file from disk to NUM_READ_BUFFER number of buffers
+// Compare copies and return the majority vote among buffers
 //
 // ------------------------------------------------------
 
-inline bool is_same_file(char * s1, char * s2, int len) {
+void read_buffer_safe(string src_name, int nastiness, char* buffer, size_t sourceSize){
 
-	for (int i = 0; i<len; i++) {
-		if (s1[i] != s2[i])
-			return false;
+	char *buffers [NUM_READ_BUFFER];
+	int vote[NUM_READ_BUFFER] = {0};
+	void *fopenretval;
+	size_t len;
+	int max_index;
+
+	// open as nasty file
+	NASTYFILE inputFile(nastiness);
+
+
+	// read to multiple buffers
+	for (int i = 0; i<NUM_READ_BUFFER; i++){
+		buffers[i] = (char*)malloc(sourceSize);
+		fopenretval = inputFile.fopen(src_name.c_str(), "rb");
+
+		if (fopenretval == NULL){
+			fprintf(stderr, "Error opening file %s\n", src_name.c_str());
+		}
+
+		len = inputFile.fread(buffers[i], 1, sourceSize);
+
+		if (len != sourceSize){
+			fprintf(stderr, "Error reading file %s\n", src_name.c_str());
+		}
+
+		if ( inputFile.fclose() != 0) {
+			fprintf(stderr, "Error closing file %s\n", src_name.c_str());
+			exit(1);			
+		}
 	}
 
-	return true;
+
+	// get the most common buffer
+	for (int i = 0; i < NUM_READ_BUFFER; i++) {
+		for (int j = i+1; j < NUM_READ_BUFFER; j++){
+			if ( memcmp(buffers[i], buffers[j], sourceSize) == 0 ) {
+				vote[i]++; vote[j]++;
+			}
+		}
+	}
+
+	// max element index
+	max_index = distance(vote, max_element(vote, vote + sizeof(vote)/sizeof(vote[0])));
+
+	// copy to the destination buffer
+	memcpy(buffer, buffers[max_index], len);
+
+	// free mem
+	for (int i=0; i < NUM_READ_BUFFER; i++)
+		free(buffers[i]);
 
 }
+
 
 
 // ------------------------------------------------------
@@ -94,94 +142,17 @@ inline bool is_same_file(char * s1, char * s2, int len) {
 // ------------------------------------------------------
 
 
-void read_file_from_disk(string src, string filename, int nastiness, char* buffer, size_t sourceSize){
-	// vars?
-	void *fopenretval;
-	size_t len1, len2;
-	char *buffer1; char *buffer2; char *buffer3;
+void read_file_from_disk(string src, string filename, int nastiness, char* buffer){
 
-	// make filenames with path
+	// make source name with src dir + filename
 	string src_name = makeFileName(src, filename);
+	size_t src_size = get_source_size(src, filename);
 
 	printf("Copying file %s\n", filename.c_str());
 
 	try {
-  		// Make an input buffer large enough for the whole file
-		buffer1 = (char *)malloc(sourceSize);
-		buffer2 = (char *)malloc(sourceSize);
-		buffer3 = (char *)malloc(sourceSize);
 
-		NASTYFILE inputFile(nastiness);
-
-		// open and read a file into the buffer
-		fopenretval = inputFile.fopen(src_name.c_str(), "rb");
-
-		if (fopenretval == NULL){
-			fprintf(stderr, "Error opening file %s\n", filename.c_str());
-		}
-
-		// read to a second buffer and compare
-		len1 = inputFile.fread(buffer1, 1, sourceSize);
-
-		if (inputFile.fclose() == 0){
-			inputFile.fopen(src_name.c_str(), "rb");
-			len2 = inputFile.fread(buffer2, 1, sourceSize);
-		} else {
-			fprintf(stderr, "Error closing file %s\n", filename.c_str());
-			exit(1);
-		}
-
-		if (len1 != sourceSize || len2 != sourceSize) {
-			fprintf(stderr, "Error reading file %s\n", filename.c_str());
-		}
-
-
-		// loop until yields the same read result 
-		while ( memcmp(buffer1, buffer2, len1) != 0 ) {
-			// read from file again 
-			printf("Re-reading file %s\n", filename.c_str());
-			if (inputFile.fclose() == 0){
-				inputFile.fopen(src_name.c_str(), "rb");
-				inputFile.fread(buffer3, 1, sourceSize);
-			} else {
-				fprintf(stderr, "Error closing file %s\n", filename.c_str());
-				exit(1);
-			}
-
-			// return the first matching buffer
-			if ( memcmp(buffer1, buffer3, len1) == 0 ) {
-				memcpy(buffer, buffer1, len1);
-				break;
-			}
-			else if ( memcmp(buffer2, buffer3, len1) == 0 ) {
-				memcpy(buffer, buffer2, len1);
-				break;
-			}
-			else {
-				if (inputFile.fclose() == 0){				
-					inputFile.fopen(src_name.c_str(), "rb");
-					inputFile.fread(buffer1, 1, sourceSize);
-					memcpy(buffer2, buffer3, len1);
-				} else {
-					fprintf(stderr, "Error closing file %s\n", filename.c_str());
-					exit(1);
-				}
-			}
-
-		}
-
-		memcpy(buffer, buffer1, len1);
-
-		// free mem and close file
-		free(buffer1);
-		free(buffer2);
-		free(buffer3);
-
-		if (inputFile.fclose() != 0){
-			fprintf(stderr, "Error closing file %s\n", filename.c_str());
-			exit(1);
-		}
-	
+		read_buffer_safe(src_name, nastiness, buffer, src_size);
 
 	} catch (C150Exception e) {
 		cerr << "nastyfiletest:copyfile(): Caught C150Exception: " << 
@@ -199,13 +170,14 @@ void read_file_from_disk(string src, string filename, int nastiness, char* buffe
 // Args: target directory, filename, file nastiness score, 
 //		 buffer to write, size of the buffer
 //
-// write the buffer safely to the file without to offset
-// the corruption of a nasty write
+// write the buffer safely to the nasty file, read from the
+// file again to make sure it is the same as the buffer
 //
 // ------------------------------------------------------
 
-void write_file_to_disk(string target, string filename, int nastiness, char* buffer, size_t sourceSize){
-
+void write_file_to_disk(string target, string filename, int nastiness, 
+						char* buffer, size_t sourceSize)
+{
 	printf("Writing file %s\n", filename.c_str());
 
 	// vars
@@ -240,9 +212,9 @@ void write_file_to_disk(string target, string filename, int nastiness, char* buf
 	
 	} while ( memcmp(buffer, buffer_copy, len) != 0 );
 	
-	cout << "Finished writing file " << targetName << endl;
-
 	free(buffer_copy);
+
+	cout << "Finished writing file " << targetName << endl;
 
 }
 
@@ -276,8 +248,7 @@ string makeFileName(string dir, string name) {
 //     
 // ------------------------------------------------------
 
-void
-checkDirectory(char *dirname) {
+void checkDirectory(char *dirname) {
   struct stat statbuf;  
   if (lstat(dirname, &statbuf) != 0) {
     fprintf(stderr,"Error stating supplied source directory %s\n", dirname);
@@ -300,8 +271,7 @@ checkDirectory(char *dirname) {
 //     
 // ------------------------------------------------------
 
-bool
-isFile(string fname) {
+bool isFile(string fname) {
   const char *filename = fname.c_str();
   struct stat statbuf;  
   if (lstat(filename, &statbuf) != 0) {
