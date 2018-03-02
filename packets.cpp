@@ -17,20 +17,18 @@
 struct filedata handle_packets(C150DgmSocket *sock, char* incomingMessage)
 {
 	struct filedata packet;
-	struct filedata_ACK response;
+	struct filedata_ack response;
 
 	memcpy((char *)&packet, incomingMessage, sizeof(struct filedata));
 
 	/* construct response header */
 	response.type = PACKET_ACK;
 	response.file_id = packet.file_id;
-	response.packet_id = packet.packet_id;
 
-	cout << "Received file: " << packet.file_id 
-		 << " packet: " << packet.packet_id << endl;
+	cout << "Received file: " << packet.file_id << endl;
 
 	/* send packet ack */
-	sock->write((char *)&response, sizeof(struct filedata_ACK));
+	sock->write((char *)&response, sizeof(response));
 
 	return packet;
 
@@ -78,8 +76,6 @@ void send_file_packets(C150DgmSocket *sock, char *buffer, size_t buffer_size, in
 	/* break buffer into packets */
 	buffer_to_packets(buffer, buffer_size, packets, f_id);
 
-	cout << "NUM OF PKT: " << num_pkts << endl; // testing
-
 	/* send packets to the server */
 	for (int i=0; i<num_windows; i++) {
 		// last window might have less packets
@@ -103,14 +99,14 @@ void send_file_packets(C150DgmSocket *sock, char *buffer, size_t buffer_size, in
 // ------------------------------------------------------
 
 void send_window_packets(C150DgmSocket *sock, struct filedata packets[], 
-					  int start_packet, int total_pkts)
+					  uint64_t start_packet, int total_pkts)
 {
 	
 	set<int> sent_packets; // stores p_id of acknowledged packets
 	ssize_t readlen;
-	char incomingMessage[sizeof(struct filedata_ACK)]; // read server msg
+	struct filedata_ack response; // cast response to struct
+	char incomingMessage[sizeof(response)]; // read server msg
 	uint32_t file_id = packets[0].file_id; // file_id of the packets
-	struct filedata_ACK response; // cast response to struct
 	bool is_valid;
 	int attempt = 0; // total # of retries
 
@@ -118,28 +114,30 @@ void send_window_packets(C150DgmSocket *sock, struct filedata packets[],
 	do {
 		/* send all packets in the window */
 		for (int i=0; i<total_pkts; i++){
-			cout << "Send file: "<< file_id << " packet: " << start_packet+i << endl;
+			//cout << "Send file: "<< file_id << " packet: " << start_packet+i << endl;
 			sock->write((char*)&packets[start_packet+i], sizeof(struct filedata));
 		}
 
 		/* read for response and check if response is packet_ack */
 		readlen = sock->read(incomingMessage, sizeof(incomingMessage));
-		
-		is_valid = validate_server_response(incomingMessage, PACKET_ACK, file_id, &response);
-		if (is_valid)
-			sent_packets.insert(response.packet_id); // packet has been ack
+		memcpy(&response, incomingMessage, sizeof(response));
+		is_valid = validate_server_response(incomingMessage, PACKET_ACK, file_id);
+		if (is_valid) {
+			sent_packets.insert(response.start_byte); // packet has been ack
+		}
 
 		/* keep reading server messages until timedout */
 		while ( sock->timedout() == false ) {
 			readlen = sock->read(incomingMessage, sizeof(incomingMessage));
+			memcpy(&response, incomingMessage, sizeof(response));
 
 			if (readlen < 0)
 				throw C150NetworkException("ERROR: server closed the socket");
 
-			is_valid = validate_server_response(incomingMessage, PACKET_ACK, file_id, &response);
+			is_valid = validate_server_response(incomingMessage, PACKET_ACK, file_id);
 			
 			if (is_valid)
-				sent_packets.insert(response.packet_id);
+				sent_packets.insert(response.start_byte);
 		}
 
 		/* all packets sent */
@@ -150,36 +148,44 @@ void send_window_packets(C150DgmSocket *sock, struct filedata packets[],
 		if ( sock->timedout() )
 			attempt++;
 
-	} while ( attempt < PKT_MAX_RETRY );
+	} while ( attempt < MAX_PKT_RETRY );
 
-	if (attempt == PKT_MAX_RETRY)
+	if (attempt == MAX_PKT_RETRY)
 		throw C150NetworkException("Fail to send packets after max retries.");
 
 }
 
-// ------------------------------------------------------
-//
-//                   validate_server_response
-//
-// Check if the message from the server is relevant
-// the response has to match the message type and current file_id.
-// Return true and unpack message if valid, return false otherwise
-//
-// ------------------------------------------------------
-
-bool validate_server_response(char *incomingMessage, int type, uint32_t file_id, 
-							  struct filedata_ACK *response)
+/* validate_server_response
+ *
+ * Check if the message from the server is relevant
+ * the response has to match the message type and current file_id.
+ * Return true if valid, false otherwise
+ *
+ */
+bool validate_server_response(char *incomingMessage, int type, uint32_t file_id)
 {
 	if ((uint8_t)incomingMessage[0] == type) {
-		// cast to response if expected type
-		memcpy(response, incomingMessage, sizeof(struct filedata_ACK)); 
-		if (response->file_id == file_id) {
-			return true;
+		if (type == SEND_ACK || type == DONE_ACK) {
+			struct file_copy_header response;
+			memcpy(&response, incomingMessage, sizeof(response)); 
+			if (response.file_id == file_id) {
+				return true;
+			}
+		} else if (type == PACKET_ACK) {
+			struct filedata_ack response;
+			memcpy(&response, incomingMessage, sizeof(response)); 
+			if (response.file_id == file_id) {
+				return true;
+			}
+		} else {
+			fprintf(stderr, "ERROR: called validate server response expecting type %i\n", type);
+			exit(1);
 		}
 	}
 
 	return false;
 }
+
 
 // ------------------------------------------------------
 //
@@ -210,7 +216,6 @@ void buffer_to_packets(char *buffer, size_t buffer_size,
 		struct filedata pkt;
 		pkt.type = PACKET;
 		pkt.file_id = f_id;
-		pkt.packet_id = i;
 		pkt.start_byte = index_to_byte(i);
 		pkt.data_len = pkt_size;
 		memcpy(pkt.data, &buffer[index_to_byte(i)], pkt_size);

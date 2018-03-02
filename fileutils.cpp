@@ -16,6 +16,7 @@ void compute_file_hash(char *filename, unsigned char *hash) {
 	stringstream *buffer_copy = new stringstream;
 
 	// read from buffer until the same 
+	// NEEDSWORK use filenastiness here
 	do {
 		t = new ifstream(filename);
 		*buffer << t->rdbuf();

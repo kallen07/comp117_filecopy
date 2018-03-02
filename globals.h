@@ -12,11 +12,6 @@
 #ifndef GLOBALS_H
 #define GLOBALS_H
 
-const int per_file_retries = 3;
-const int NETWORK_RETRIES = 5;
-const string DISK_ERROR = "disk error";
-const string NETWORK_ERROR = "network error"; 
-
 #define MAX_FILE_BYTES 1000000   /* 1 MB */
 #define MAX_FILENAME_BYTES 260
 #define MAX_DATA_BYTES 400
@@ -24,23 +19,23 @@ const string NETWORK_ERROR = "network error";
 #define MSG_TYPE_BYTES 1
 
 #define NUM_READ_BUFFER 10
-#define PKT_WINDOW_SIZE 4
-#define PKT_MAX_RETRY 6
-#define MSG_MAX_RETRY 6
+#define PKT_WINDOW_SIZE 40
+#define MAX_PKT_RETRY 8
+#define MAX_MSG_RETRY 6
 
 #define MAX_UDP_MSG_BYTES 512
+#define MAX_FILE_RETRIES 3
+
 
 struct __attribute__((__packed__)) file_copy_header {
 	uint8_t type;
 	char filename[MAX_FILENAME_BYTES];
 	uint32_t file_id;
-	uint64_t num_packets;
 };
 
 struct __attribute__((__packed__)) filedata {
 	uint8_t type;
 	uint32_t file_id;
-	//uint64_t packet_id;
 	uint64_t start_byte;
 	uint64_t data_len;
 	char data[MAX_DATA_BYTES];
