@@ -56,10 +56,11 @@ bool is_send_done(
   	char curr_file_buff[MAX_FILE_BYTES], uint64_t curr_file_bytes, 
   	int filenastiness);
 void send_e2e_hash(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
-				   char *curr_filename[MAX_FILENAME_BYTES], bool is_duplicate);
+				   string curr_filename, bool is_duplicate,
+				   string target, int nastiness);
 void send_e2e_done_ack(
 	C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
-	char *curr_filename[MAX_FILENAME_BYTES], bool is_duplicate);
+	char *curr_filename[MAX_FILENAME_BYTES], bool is_duplicate, string dir);
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -68,7 +69,7 @@ void send_e2e_done_ack(
 
 int main(int argc, char *argv[])
 {
-	GRADEME(argc, argv); 	// Ensure our submission is graded
+	// GRADEME(argc, argv); 	// Ensure our submission is graded
 
 	int networknastiness, filenastiness;
 	DIR *TARGET;    // Unix descriptor for open directory
@@ -139,10 +140,10 @@ void parse_command_line_args(int argc, char *argv[], int &networknastiness,
 /* purpose: recieve and handle client requests
  * aruguments:
  * 		sock: socket on which to listen for requests
- * NEEDSWORK: add support for multiple clients
  */
 void handle_message_loop(C150DgmSocket *sock, string target_dir, int filenastiness)
 {
+	// NEEDSWORK: curr_filename should be better switched to string
 	ssize_t readlen;
 	char buffer[MAX_UDP_MSG_BYTES];
 	bool waiting_for_filedata = false;       // server state
@@ -150,8 +151,6 @@ void handle_message_loop(C150DgmSocket *sock, string target_dir, int filenastine
 	msg_types type;
 	char curr_filename[MAX_FILENAME_BYTES];
 	uint32_t curr_fileid;
-	// NEEDSWORK should not need to write into a buffer
-	// before writing to disk?
 	char curr_file_buff[MAX_FILE_BYTES];
 	uint64_t curr_file_bytes;
 
@@ -193,30 +192,31 @@ void handle_message_loop(C150DgmSocket *sock, string target_dir, int filenastine
 				break;
 			case E2E_REQ:
 				if (!waiting_for_filedata) {
-					send_e2e_hash(sock, buffer, (char **)&curr_filename,
-								  waiting_for_e2e_results);
+					send_e2e_hash(sock, buffer, string(curr_filename),
+								  waiting_for_e2e_results, target_dir, filenastiness);
 					waiting_for_e2e_results = true;
 				}
 				break;
 			case E2E_SUCC:
-				if (waiting_for_e2e_results) {
+				// if (waiting_for_e2e_results) {
 					send_e2e_done_ack(sock, buffer, (char **)&curr_filename,
-									  !waiting_for_e2e_results);
+									  !waiting_for_e2e_results, target_dir);
 					waiting_for_e2e_results  = false;
-				}
+				// }
 				break;
 			case E2E_FAIL:
-				if (waiting_for_e2e_results) {
+				// if (waiting_for_e2e_results) {
 					send_e2e_done_ack(sock, buffer, (char **)&curr_filename,
-									  !waiting_for_e2e_results);
+									  !waiting_for_e2e_results, target_dir);
 					waiting_for_e2e_results = false;
-				}
+				// }
 				break;
 			default:
 				fprintf(stderr, "No matching message type %i\n", type);
 		}
 	}
 }
+
 
 
 void send_filecopy_init_ack(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
@@ -287,7 +287,7 @@ bool is_send_done(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
 
 	if (request.file_id == curr_fileid) {
 
-		/* write buffer to disk */
+		/* write buffer to disk as TMP file */
 		write_file_to_disk(dest_dir, curr_filename, filenastiness, 
 						   curr_file_buff, curr_file_bytes);
 
@@ -316,37 +316,32 @@ bool is_send_done(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
  */
 // TODO update comments
 void send_e2e_hash(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
-				   char *curr_filename[MAX_FILENAME_BYTES], bool is_duplicate)
+				   string curr_filename, bool is_duplicate,
+				   string target, int nastiness)
 {
 	struct e2e_header request;
 	struct e2e_header response;
 
 	memcpy((char *)&request, incoming_msg, sizeof(request));
 
-	/* if we already sent a hash without recieving a success/fail 
-	   confirmation from the server, then don't handle new request.
-	   also, ignore stale requests */
-	if (is_duplicate && strcmp(*curr_filename, request.filename) != 0)
-	{
-		return;
-	}
+	// cout << *curr_filename << endl; // *curr_fname seg faulting
+	//  if we already sent a hash without recieving a success/fail 
+	//    confirmation from the server, then don't handle new request.
+	//    also, ignore stale requests 
+	// // should always return regardless of states?
+	// if ( curr_filename != request.filename)
+	// {
+	// 	return;
+	// }
 
 	/* print to grading log */
 	cerr << "File: " << request.filename
 			 << " received, beginning end-to-end check" << endl;
 	
 	/* compute the hash*/
-	// NEEDSWORK use filenastiness here
-	ifstream *t;
-	stringstream *buffer;
 	unsigned char hash[MAX_SHA1_BYTES];
-	t = new ifstream(request.filename);
-	buffer = new stringstream;
-	*buffer << t->rdbuf();
-	SHA1((const unsigned char*)buffer->str().c_str(), 
-		(buffer->str()).length(), hash);
-	delete t;
-	delete buffer;
+	string tmp_filename = string(request.filename) + ".TMP";
+	compute_file_hash(tmp_filename, target, nastiness, hash);
 
 	/* construct and send hash */
 	response.type = E2E_HASH;
@@ -355,25 +350,30 @@ void send_e2e_hash(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
 	sock->write((char *)&response, sizeof(struct e2e_header));
 
 	/* update state */
-	memcpy(curr_filename, request.filename, MAX_FILENAME_BYTES);
+	// memcpy(curr_filename, request.filename, MAX_FILENAME_BYTES);
 }
 
 void send_e2e_done_ack(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
-					   char *curr_filename[MAX_FILENAME_BYTES], bool is_duplicate)
+					   char *curr_filename[MAX_FILENAME_BYTES], 
+					   bool is_duplicate, string dir)
 {
-	bool is_valid_duplicate;
+	// bool is_valid_duplicate;
 	struct e2e_header request;
 	char fname[MAX_FILENAME_BYTES];
 
 	memcpy(&request, incoming_msg, sizeof(request));
 	memcpy(fname, request.filename, MAX_FILENAME_BYTES);
 
-	is_valid_duplicate = is_duplicate && strcmp(fname, *curr_filename) == 0;
+	// is_valid_duplicate = is_duplicate && strcmp(fname, *curr_filename) == 0;
 
-	// NEEDSWORK: if the file check succeeded, change the name of the file
+	// if (!is_duplicate || is_valid_duplicate)
+	// {
+		/* rename file from .TMP to permanent if succ */
+		if ( request.type == E2E_SUCC )
+			rename_tmp(fname, dir);
+		else
+			remove_tmp(fname, dir);
 
-	if (!is_duplicate || is_valid_duplicate)
-	{
 		/* construct response */
 		struct e2e_header response;
 		response.type = E2E_DONE;
@@ -389,7 +389,7 @@ void send_e2e_done_ack(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES]
 		} else {
 			cerr << "File: " << fname << " end-to-end check failed\n" << endl;			
 		}
-	}
+	// }
 }
 
 

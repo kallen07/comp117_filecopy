@@ -38,8 +38,6 @@ const int SERVERARG = 1;
 const int SRC_ARG = 4;       // name of source file
 const int TIMEOUT = 2000;    // in milliseconds
 
-
-
 ////////////////////////////////////////////////////////////////////////////////
 /*************************** FUNCTION DECLARATIONS ****************************/
 ////////////////////////////////////////////////////////////////////////////////
@@ -54,12 +52,15 @@ void init_filecopy(C150DgmSocket *sockfd, string fname, uint32_t file_id);
 void send_packets(C150DgmSocket *sockfd, string src_dir, string fname,
 				  uint32_t file_id, int filenastiness);
 void finish_filecopy(C150DgmSocket *sockfd, string fname, uint32_t file_id);
-bool end_to_end_check(C150DgmSocket *sockfd, string fname);
-bool send_e2e_message(char *message_to_send, int res_type, char* filename,
+
+
+bool end_to_end_check(C150DgmSocket *sockfd, string fname, string src, int filenastiness);
+void send_e2e_message(char *message_to_send, int res_type, char* filename,
 					  struct e2e_header *response, C150DgmSocket *sockfd);
 bool get_e2e_response(char *incoming_msg_buffer, int type, char * curr_file,
 					  struct e2e_header *response);
-bool compute_and_compare_hash(char *filename, struct e2e_header *hash_msg);
+bool compute_and_compare_hash(string filename, string src, int filenastiness, struct e2e_header *hash_msg);
+
 
 void send_done_message(C150DgmSocket *sock, uint32_t f_id);
 void send_filecopy_request(C150DgmSocket *sock, uint32_t f_id, char *fname, int num_pkts);
@@ -70,10 +71,11 @@ void send_file_message(C150DgmSocket *sock, char *request, int response_type, ui
 /*********************************** MAIN *************************************/
 ////////////////////////////////////////////////////////////////////////////////
 
+
 int main(int argc, char *argv[])
 {
 
-	GRADEME(argc, argv); // Ensure our submission is graded
+	// GRADEME(argc, argv); // Ensure our submission is graded
 
 	int networknastiness, filenastiness;
 	struct dirent *sourceFile;  // Directory entry for source file
@@ -170,6 +172,7 @@ void parse_command_line_args(int argc, char *argv[], int &networknastiness,
 /******************************** SEND FILE ***********************************/
 ////////////////////////////////////////////////////////////////////////////////
 
+
 /* purpose: reliably copy a single file.
  * arguments:
  *		sockfd: socket file descriptor for the server
@@ -189,13 +192,14 @@ bool copy_file(C150DgmSocket *sockfd, string src_dir, string fname,
 
 	for (int retries = 0; retries < MAX_FILE_RETRIES; retries++) {
 		cerr << "File: " << fname 
-				 << " beginnning transmission, attempt" << retries + 1 << endl;
+				 << " beginnning transmission, attempt " << retries + 1 << endl;
 		init_filecopy(sockfd, fname, file_id);
 		send_packets(sockfd, src_dir, fname, file_id, filenastiness);
 		finish_filecopy(sockfd, fname, file_id);
 		cerr << "File: " << fname << " transmission complete, waiting for "
 				 << "end-to-end check, attempt " << retries + 1  << endl;
-		copy_success = end_to_end_check(sockfd, fname);
+		copy_success = end_to_end_check(sockfd, fname, src_dir, filenastiness);
+
 		if (copy_success) {
 			cerr << "File: " << fname 
 					 << " end-to-end check succeeded, attempt " 
@@ -276,6 +280,9 @@ void send_file_message(C150DgmSocket *sock, char *request, int response_type, ui
 
 		/* read response */
 		readlen = sock->read(incomingMessage, sizeof(incomingMessage));
+		
+		if (readlen < 0)
+			throw C150NetworkException("Error: server closed the socket.");
 
 		is_valid = validate_server_response(incomingMessage, response_type, file_id);
 		if (is_valid) return;
@@ -314,9 +321,9 @@ void send_file_message(C150DgmSocket *sock, char *request, int response_type, ui
  * 		true if the end to end check succeeded
  *		false otherwise
  */
-bool end_to_end_check(C150DgmSocket *sockfd, string fname)
-{	
-	/* create E2E_REQ msg */
+bool end_to_end_check(C150DgmSocket *sockfd, string fname, string src, int filenastiness)
+{
+	/* create end to end check request msg */
 	struct e2e_header e2e_req;
 	e2e_req.type = E2E_REQ;
 	strcpy(e2e_req.filename, fname.c_str());
@@ -327,7 +334,7 @@ bool end_to_end_check(C150DgmSocket *sockfd, string fname)
 	send_e2e_message((char *)&e2e_req, E2E_HASH, e2e_req.filename, &hash_msg, sockfd);
 
 	/* compare client and server hash result */
-	bool hash_match = compute_and_compare_hash(e2e_req.filename, &hash_msg);
+	bool hash_match = compute_and_compare_hash(e2e_req.filename, src, filenastiness, &hash_msg);
 
 	/* create E2E_SUCC msg or E2E_FAIL msg */
 	struct e2e_header hash_result_msg;
@@ -359,42 +366,49 @@ bool end_to_end_check(C150DgmSocket *sockfd, string fname)
  *		received 
  * 		false: otherwise
  */
-bool send_e2e_message(char *message_to_send, int res_type, char* filename,
+void send_e2e_message(char *message_to_send, int res_type, char* filename,
 					  struct e2e_header *response, C150DgmSocket *sockfd)
 {	
 	ssize_t readlen;
 	char incomingMessage[sizeof(struct e2e_header)];
 	bool got_hash;
+	int attempt = 0;
 	
-	for (int i = 0; i < MAX_MSG_RETRY; i++) {
+	do {
 		/* send end to end check request msg */
 		sockfd->write(message_to_send, sizeof(struct e2e_header));
 
 		/* wait for response */
 		readlen = sockfd->read(incomingMessage, sizeof(incomingMessage));
-		if (readlen < 0) {
+
+		if (readlen < 0) 
 			fprintf(stderr, "ERROR: server closed the socket\n");
-			exit(1);
-		}
+
 		got_hash = get_e2e_response(incomingMessage, res_type, filename, response);
-		if (got_hash) return true;
+		if (got_hash) break;
 
 		/* keep reading messages until timedout */
 		while (sockfd->timedout() == false) {
 			readlen = sockfd->read(incomingMessage, sizeof(incomingMessage));
 
-			if (readlen < 0) {
+			if (readlen < 0) 
 				fprintf(stderr, "ERROR: server closed the socket\n");
-				exit(1);
-			}
-
+			
 			got_hash = get_e2e_response(incomingMessage, res_type, 
 										filename, response);
-			if (got_hash) return true;
+			if (got_hash) break;
 		}
-	}
 
-	return false;
+		if (got_hash) break;
+
+		if ( sockfd->timedout() ) 
+			attempt++;
+
+	} while ( attempt < MAX_MSG_RETRY );
+
+	if ( attempt == MAX_MSG_RETRY )
+		throw C150NetworkException("Fail to send message after max retries.\n");
+
 }
 
 /* arguments:
@@ -429,11 +443,13 @@ bool get_e2e_response(char *incoming_msg_buffer, int type, char * curr_file,
  *		true: if the hashes match and the file copied successfully
  *		false: otherwise
  */
-bool compute_and_compare_hash(char *filename, struct e2e_header *hash_msg){
+bool compute_and_compare_hash(string filename, string src, int filenastiness, 
+							  struct e2e_header *hash_msg)
+{
 	/* compute the hash on the client side */
 	unsigned char hash[MAX_SHA1_BYTES];
 	bool hash_match = true;
-	compute_file_hash(filename, hash);
+	compute_file_hash(filename, src, filenastiness, hash);
 
 	/* compare client and server hash */
 	for (int i=0; i<MAX_SHA1_BYTES; i++)

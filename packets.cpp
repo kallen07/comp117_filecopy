@@ -78,6 +78,7 @@ void send_file_packets(C150DgmSocket *sock, char *buffer, size_t buffer_size, in
 
 	/* send packets to the server */
 	for (int i=0; i<num_windows; i++) {
+		cout << "window " << i << " " << num_pkts << " " << num_windows <<endl;
 		// last window might have less packets
 		if ( i == num_windows - 1)
 			send_window_packets(sock, packets, i*PKT_WINDOW_SIZE, num_pkts % PKT_WINDOW_SIZE);
@@ -114,12 +115,15 @@ void send_window_packets(C150DgmSocket *sock, struct filedata packets[],
 	do {
 		/* send all packets in the window */
 		for (int i=0; i<total_pkts; i++){
-			//cout << "Send file: "<< file_id << " packet: " << start_packet+i << endl;
+			// cout << "Send file: "<< file_id << " packet: " << start_packet+i << endl;
 			sock->write((char*)&packets[start_packet+i], sizeof(struct filedata));
 		}
 
 		/* read for response and check if response is packet_ack */
 		readlen = sock->read(incomingMessage, sizeof(incomingMessage));
+		if (readlen <= 0)
+			throw C150NetworkException("ERROR: server closed the socket\n");
+
 		memcpy(&response, incomingMessage, sizeof(response));
 		is_valid = validate_server_response(incomingMessage, PACKET_ACK, file_id);
 		if (is_valid) {
@@ -132,7 +136,7 @@ void send_window_packets(C150DgmSocket *sock, struct filedata packets[],
 			memcpy(&response, incomingMessage, sizeof(response));
 
 			if (readlen < 0)
-				throw C150NetworkException("ERROR: server closed the socket");
+				throw C150NetworkException("ERROR: server closed the socket\n");
 
 			is_valid = validate_server_response(incomingMessage, PACKET_ACK, file_id);
 			
@@ -151,7 +155,7 @@ void send_window_packets(C150DgmSocket *sock, struct filedata packets[],
 	} while ( attempt < MAX_PKT_RETRY );
 
 	if (attempt == MAX_PKT_RETRY)
-		throw C150NetworkException("Fail to send packets after max retries.");
+		throw C150NetworkException("Fail to send packets after max retries.\n");
 
 }
 

@@ -1,5 +1,58 @@
 #include "fileutils.h"
 
+
+// ------------------------------------------------------
+//
+//                 make_tmp_name
+//
+// Make a temporary fname with .TMP
+//
+// ------------------------------------------------------
+
+string make_tmp_name(string filename, string dir)
+{
+	string tmp_name = makeFileName(dir, filename);
+	string result = tmp_name + ".TMP";
+	return result;
+}
+
+// ------------------------------------------------------
+//
+//                 remove_tmp
+//
+// Remove .TMP from filename after filecopy fail
+//
+// ------------------------------------------------------
+
+void remove_tmp(string filename, string dir)
+{
+	struct stat statbuf;
+
+	string dest_name = makeFileName(dir, filename); // desired name
+	string curr_name = dest_name + ".TMP";
+	if (lstat(curr_name.c_str(), &statbuf) == 0) // if file exists
+		remove(curr_name.c_str());
+}
+
+// ------------------------------------------------------
+//
+//                 rename_tmp
+//
+// Rename .TMP from filename after filecopy success
+//
+// ------------------------------------------------------
+
+void rename_tmp(string filename, string dir)
+{
+	struct stat statbuf;
+
+	string dest_name = makeFileName(dir, filename); // desired name
+	string curr_name = dest_name + ".TMP"; // current tmp name
+
+	if (lstat(curr_name.c_str(), &statbuf) == 0)
+		rename(curr_name.c_str(), dest_name.c_str());
+}
+
 // ------------------------------------------------------
 //
 //                   compute_file_hash
@@ -10,26 +63,42 @@
 //
 // ------------------------------------------------------
 
-void compute_file_hash(char *filename, unsigned char *hash) {
-	ifstream *t;
-	stringstream *buffer = new stringstream;
-	stringstream *buffer_copy = new stringstream;
+void compute_file_hash(string filename, string dir, int nastiness, unsigned char *hash) 
+{
+	
+	// nasty hash
+	void *fopenretval;
+	char* buffer; char* buffer_copy;
+	size_t size;
+	string fname;
 
-	// read from buffer until the same 
-	// NEEDSWORK use filenastiness here
+	fname = makeFileName(dir, filename);
+	size = get_source_size(dir, filename);
+
+
+	NASTYFILE inputfile(nastiness);
+	buffer = (char*)malloc(size);
+	buffer_copy = (char*)malloc(size);
+	
+	fopenretval = inputfile.fopen(fname.c_str(), "rb");
+	if (fopenretval == NULL)
+		fprintf(stderr, "Error opening file.\n");
+
 	do {
-		t = new ifstream(filename);
-		*buffer << t->rdbuf();
-		*buffer_copy << t->rdbuf();
-	} while ( buffer->str() != buffer_copy->str() );
+		inputfile.fseek(0, SEEK_SET);
+		inputfile.fread(buffer, 1, size);
 
+		inputfile.fseek(0, SEEK_SET);
+		inputfile.fread(buffer_copy, 1, size);
+	} while ( memcmp(buffer, buffer_copy, size) != 0 );
 
-	SHA1((const unsigned char*)buffer->str().c_str(), 
-		(buffer->str()).length(), hash);
+	inputfile.fclose();
 
-	delete t;
-	delete buffer;
-	delete buffer_copy;
+	SHA1((unsigned char*)buffer, size, hash);
+
+	free(buffer);
+	free(buffer_copy);
+
 }
 
 // ------------------------------------------------------
@@ -83,27 +152,29 @@ void read_buffer_safe(string src_name, int nastiness, char* buffer, size_t sourc
 
 	// open as nasty file
 	NASTYFILE inputFile(nastiness);
-
+	fopenretval = inputFile.fopen(src_name.c_str(), "rb");
+	
+	if (fopenretval == NULL){
+		fprintf(stderr, "Error opening file %s\n", src_name.c_str());
+	}
 
 	// read to multiple buffers
 	for (int i = 0; i<NUM_READ_BUFFER; i++){
 		buffers[i] = (char*)malloc(sourceSize);
-		fopenretval = inputFile.fopen(src_name.c_str(), "rb");
 
-		if (fopenretval == NULL){
-			fprintf(stderr, "Error opening file %s\n", src_name.c_str());
-		}
-
+		inputFile.fseek(0, SEEK_SET); // set to 0 byte
 		len = inputFile.fread(buffers[i], 1, sourceSize);
 
 		if (len != sourceSize){
 			fprintf(stderr, "Error reading file %s\n", src_name.c_str());
 		}
 
-		if ( inputFile.fclose() != 0) {
-			fprintf(stderr, "Error closing file %s\n", src_name.c_str());
-			exit(1);			
-		}
+	}
+
+	// close file after reads
+	if ( inputFile.fclose() != 0) {
+		fprintf(stderr, "Error closing file %s\n", src_name.c_str());
+		exit(1);			
 	}
 
 
@@ -186,7 +257,7 @@ void write_file_to_disk(string target, string filename, int nastiness,
 	char *buffer_copy = (char *)malloc(sourceSize);
 
 	// make copy file name
-	string targetName = makeFileName(target, filename);
+	string targetName = make_tmp_name(filename, target);
 
 	NASTYFILE outputFile(nastiness);
 	

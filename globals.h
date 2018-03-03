@@ -19,9 +19,9 @@
 #define MSG_TYPE_BYTES 1
 
 #define NUM_READ_BUFFER 10
-#define PKT_WINDOW_SIZE 40
+#define PKT_WINDOW_SIZE 50
 #define MAX_PKT_RETRY 8
-#define MAX_MSG_RETRY 6
+#define MAX_MSG_RETRY 8
 
 #define MAX_UDP_MSG_BYTES 512
 #define MAX_FILE_RETRIES 3
