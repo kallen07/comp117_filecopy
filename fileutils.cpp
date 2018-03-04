@@ -220,14 +220,12 @@ void read_file_from_disk(string src, string filename, int nastiness, char* buffe
 	string src_name = makeFileName(src, filename);
 	size_t src_size = get_source_size(src, filename);
 
-	printf("Copying file %s\n", filename.c_str());
-
 	try {
 
 		read_buffer_safe(src_name, nastiness, buffer, src_size);
 
 	} catch (C150Exception e) {
-		cerr << "nastyfiletest:copyfile(): Caught C150Exception: " << 
+		*GRADING << "nastyfiletest:copyfile(): Caught C150Exception: " << 
 		e.formattedExplanation() << endl;
 	}
 
@@ -283,8 +281,6 @@ void write_file_to_disk(string target, string filename, int nastiness,
 	} while ( memcmp(buffer, buffer_copy, len) != 0 );
 	
 	free(buffer_copy);
-
-	cout << "Finished writing file " << targetName << endl;
 
 }
 

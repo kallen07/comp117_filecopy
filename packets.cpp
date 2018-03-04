@@ -25,8 +25,6 @@ struct filedata handle_packets(C150DgmSocket *sock, char* incomingMessage)
 	response.type = PACKET_ACK;
 	response.file_id = packet.file_id;
 
-	cout << "Received file: " << packet.file_id << endl;
-
 	/* send packet ack */
 	sock->write((char *)&response, sizeof(response));
 
@@ -75,7 +73,6 @@ void send_file_packets(C150DgmSocket *sock, char *buffer, size_t buffer_size, in
 
 	/* break buffer into packets */
 	buffer_to_packets(buffer, buffer_size, packets, f_id);
-	cout << "Total window: " << num_windows <<endl;
 
 	/* send packets to the server */
 	for (int i=0; i<num_windows; i++) {
@@ -98,7 +95,10 @@ void send_file_packets(C150DgmSocket *sock, char *buffer, size_t buffer_size, in
 // the total number of packets in the window
 //
 // ------------------------------------------------------
-
+/* NEEDSWORK:
+ * 	seg fault when networknastiness = 3;
+ * 	start_packet and packets are messed up
+ */
 void send_window_packets(C150DgmSocket *sock, struct filedata packets[], 
 					  	int start_packet, int total_pkts)
 {
@@ -115,7 +115,6 @@ void send_window_packets(C150DgmSocket *sock, struct filedata packets[],
 	do {
 		/* send all packets in the window */
 		for (int i=0; i<total_pkts; i++){
-			// cout << "Send file: "<< file_id << " packet: " << start_packet+i << endl;
 			sock->write((char*)&packets[start_packet+i], sizeof(struct filedata));
 		}
 
@@ -123,9 +122,6 @@ void send_window_packets(C150DgmSocket *sock, struct filedata packets[],
 		readlen = sock->read(incomingMessage, sizeof(incomingMessage));
 		if (readlen < 0)
 			throw C150NetworkException("ERROR: server closed the socket\n");
-
-		// cout << packets[0].type << start_packet << endl;
-		// cout << int(packets[start_packet].type) << " " << sizeof(incomingMessage) << endl;
 
 		memcpy(&response, incomingMessage, sizeof(response));
 		is_valid = validate_server_response(incomingMessage, PACKET_ACK, file_id);

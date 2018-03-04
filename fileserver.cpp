@@ -5,7 +5,6 @@
  * FileCopy Assignment
  * 02/20/2018
  *
- * Purpose: TODO
  *          
  */
 #include "c150nastydgmsocket.h"
@@ -53,12 +52,10 @@ bool is_send_done(
 	C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
 	char curr_filename[MAX_FILENAME_BYTES], uint32_t curr_fileid, string dest_dir,
   	char curr_file_buff[], size_t filesize, int filenastiness);
-void send_e2e_hash(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
-				   string curr_filename, bool is_duplicate,
+void send_e2e_hash(C150DgmSocket *sock, char incoming_msg[],
 				   string target, int nastiness);
 void send_e2e_done_ack(
-	C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
-	char *curr_filename[MAX_FILENAME_BYTES], bool is_duplicate, string dir);
+	C150DgmSocket *sock, char incoming_msg[], string dir);
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -67,7 +64,7 @@ void send_e2e_done_ack(
 
 int main(int argc, char *argv[])
 {
-	// GRADEME(argc, argv); 	// Ensure our submission is graded
+	GRADEME(argc, argv); 	// Ensure our submission is graded
 
 	int networknastiness, filenastiness;
 	DIR *TARGET;    // Unix descriptor for open directory
@@ -86,7 +83,7 @@ int main(int argc, char *argv[])
 		/* enter receive and handle message loop */
 		handle_message_loop(sock, argv[TARGET_ARG], filenastiness);
 	} catch (C150NetworkException e) {
-		cerr << argv[0] << ": caught C150NetworkException: " 
+		*GRADING << argv[0] << ": caught C150NetworkException: " 
 			 << e.formattedExplanation() << endl;
 	}
 	return 0;
@@ -196,24 +193,17 @@ void handle_message_loop(C150DgmSocket *sock, string target_dir, int filenastine
 				break;
 			case E2E_REQ:
 				if (!waiting_for_filedata) {
-					send_e2e_hash(sock, buffer, string(curr_filename),
-								  waiting_for_e2e_results, target_dir, filenastiness);
+					send_e2e_hash(sock, buffer, target_dir, filenastiness);
 					waiting_for_e2e_results = true;
 				}
 				break;
 			case E2E_SUCC:
-				// if (waiting_for_e2e_results) {
-					send_e2e_done_ack(sock, buffer, (char **)&curr_filename,
-									  !waiting_for_e2e_results, target_dir);
-					waiting_for_e2e_results  = false;
-				// }
+				send_e2e_done_ack(sock, buffer, target_dir);
+				waiting_for_e2e_results  = false;
 				break;
 			case E2E_FAIL:
-				// if (waiting_for_e2e_results) {
-					send_e2e_done_ack(sock, buffer, (char **)&curr_filename,
-									  !waiting_for_e2e_results, target_dir);
-					waiting_for_e2e_results = false;
-				// }
+				send_e2e_done_ack(sock, buffer, target_dir);
+				waiting_for_e2e_results = false;
 				break;
 			default:
 				fprintf(stderr, "No matching message type %i\n", type);
@@ -222,6 +212,16 @@ void handle_message_loop(C150DgmSocket *sock, string target_dir, int filenastine
 }
 
 
+/* purpose: send filecopy acknowledgment to the client
+ * aruguments:
+ * 		sock: socket on which to listen for requests
+ *		incoming_msg: income request from the client
+ *		curr_filename: the name of the file to-be-copied
+ *		curr_fileid: the id of the file to-be-copied
+ *		is_duplicate: did we already recevie a filecopy initalization message?
+ * returns: 
+ *		the size of the file we are going to copy
+ */
 
 size_t send_filecopy_init_ack(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
 							char curr_filename[MAX_FILENAME_BYTES], 
@@ -251,12 +251,20 @@ size_t send_filecopy_init_ack(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG
 	}
 
 	/* print to grading log */
-	cerr << "File: " << request.filename
+	*GRADING << "File: " << request.filename
 			 << " starting to receive file" << endl;
 
 	return request.file_size;
 	
 }
+
+/* purpose: send packet ack to the client and store packet data into buffer
+ * aruguments:
+ * 		sock: socket on which to listen for requests
+ *		incoming_msg: income request from the client
+ *		curr_fileid: the id of the copying file
+ *		curr_file_buff: buffer to hold the packet data before writing to disk
+ */
 
 void receive_packet(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
 			   uint32_t curr_fileid, char curr_file_buff[])
@@ -265,7 +273,7 @@ void receive_packet(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
 
 	memcpy(&packet, incoming_msg, sizeof(packet));
 
-	/* write the data in the packet */
+	/* write the data in the packet to the buffer */
 	if (packet.file_id == curr_fileid) {
 		memcpy(&(curr_file_buff[packet.start_byte]), &(packet.data), packet.data_len);
 	}
@@ -280,6 +288,20 @@ void receive_packet(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
 	sock -> write((char *)&response, sizeof(response));
 }
 
+/* purpose: send filecopy done ack to the client and write the copied file to disk
+ * aruguments:
+ * 		sock: socket on which to listen for requests
+ *		incoming_msg: income request from the client
+ *		curr_filename: the name of the copied file 
+ *		curr_fileid: the id of the copied file
+ *		dest_dir: target directory
+ *		curr_file_buff: buffer to hold the copied data
+ *		filesize: size of the copied file
+ *		filenastiness: nastiness level for disk write
+ *
+ * return: true if the file is written to the disk,
+ *		   false if the done message dont match the current fileid
+ */
 bool is_send_done(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
 		         char curr_filename[MAX_FILENAME_BYTES], 
   				 uint32_t curr_fileid, string dest_dir,
@@ -314,13 +336,12 @@ bool is_send_done(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
 /* arguments:
  * 		sock: socket
  *		buffer: incoming message buffer
- * returns :
- * 		true: if the incoming message is processed and response is returned
- * 		false: otherwise
+ *		target: target directory
+ *		nastiness: file nastiness
+ * purpose: compute the hash of the requested file and send the response back
+ * 		to the client
  */
-// TODO update comments
-void send_e2e_hash(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
-				   string curr_filename, bool is_duplicate,
+void send_e2e_hash(C150DgmSocket *sock, char incoming_msg[],
 				   string target, int nastiness)
 {
 	struct e2e_header request;
@@ -328,18 +349,8 @@ void send_e2e_hash(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
 
 	memcpy((char *)&request, incoming_msg, sizeof(request));
 
-	// cout << *curr_filename << endl; // *curr_fname seg faulting
-	//  if we already sent a hash without recieving a success/fail 
-	//    confirmation from the server, then don't handle new request.
-	//    also, ignore stale requests 
-	// // should always return regardless of states?
-	// if ( curr_filename != request.filename)
-	// {
-	// 	return;
-	// }
-
 	/* print to grading log */
-	cerr << "File: " << request.filename
+	*GRADING << "File: " << request.filename
 			 << " received, beginning end-to-end check" << endl;
 	
 	/* compute the hash*/
@@ -353,13 +364,16 @@ void send_e2e_hash(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
 	memcpy(&response.hash, &hash, MAX_SHA1_BYTES);	
 	sock->write((char *)&response, sizeof(struct e2e_header));
 
-	/* update state */
-	// memcpy(curr_filename, request.filename, MAX_FILENAME_BYTES);
 }
 
-void send_e2e_done_ack(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
-					   char *curr_filename[MAX_FILENAME_BYTES], 
-					   bool is_duplicate, string dir)
+/* arguments:
+ * 		sock: socket
+ *		buffer: incoming message buffer
+ *		dir: target directory
+ * purpose: if the client indicates e2e success, rename the file;
+ * 		if the client indicates e2e fails, removes the TMP file.
+ */
+void send_e2e_done_ack(C150DgmSocket *sock, char incoming_msg[], string dir)
 {
 	// bool is_valid_duplicate;
 	struct e2e_header request;
@@ -368,32 +382,28 @@ void send_e2e_done_ack(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES]
 	memcpy(&request, incoming_msg, sizeof(request));
 	memcpy(fname, request.filename, MAX_FILENAME_BYTES);
 
-	// is_valid_duplicate = is_duplicate && strcmp(fname, *curr_filename) == 0;
+	/* rename file from .TMP to permanent if succ, remove otherwise */
+	if ( request.type == E2E_SUCC )
+		rename_tmp(fname, dir);
+	else
+		remove_tmp(fname, dir);
 
-	// if (!is_duplicate || is_valid_duplicate)
-	// {
-		/* rename file from .TMP to permanent if succ */
-		if ( request.type == E2E_SUCC )
-			rename_tmp(fname, dir);
-		else
-			remove_tmp(fname, dir);
+	/* construct response */
+	struct e2e_header response;
+	response.type = E2E_DONE;
+	memcpy(&response.filename, fname, MAX_FILENAME_BYTES);
+	bzero(&response.hash, sizeof(response.hash));
 
-		/* construct response */
-		struct e2e_header response;
-		response.type = E2E_DONE;
-		memcpy(&response.filename, fname, MAX_FILENAME_BYTES);
-		bzero(&response.hash, sizeof(response.hash));
+	/* write response */
+	sock -> write((char *)&response, sizeof(response));
 
-		/* write response */
-		sock -> write((char *)&response, sizeof(response));
+	/* print to grading log and console */
+	if (request.type == E2E_SUCC) {
+		*GRADING << "File: " << fname << " end-to-end check succeeded\n" << endl;
+	} else {
+		*GRADING << "File: " << fname << " end-to-end check failed\n" << endl;			
+	}
 
-		/* print to grading log and console */
-		if (request.type == E2E_SUCC) {
-			cerr << "File: " << fname << " end-to-end check succeeded\n" << endl;
-		} else {
-			cerr << "File: " << fname << " end-to-end check failed\n" << endl;			
-		}
-	// }
 }
 
 

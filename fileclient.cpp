@@ -75,7 +75,7 @@ void send_file_message(C150DgmSocket *sock, char *request, int response_type, ui
 int main(int argc, char *argv[])
 {
 
-	// GRADEME(argc, argv); // Ensure our submission is graded
+	GRADEME(argc, argv); // Ensure our submission is graded
 
 	int networknastiness, filenastiness;
 	struct dirent *sourceFile;  // Directory entry for source file
@@ -115,7 +115,7 @@ int main(int argc, char *argv[])
 			bool success = copy_file(sock, argv[SRC_ARG], sourceFile->d_name, 
 									 num_files, filenastiness);
 			if (!success) {
-				cerr << "Unable to copy file " << sourceFile->d_name 
+				*GRADING << "Unable to copy file " << sourceFile->d_name 
 						<<  " after " << MAX_FILE_RETRIES << " tries" << endl;
 			}
   		} catch (C150Exception e) {
@@ -191,23 +191,23 @@ bool copy_file(C150DgmSocket *sockfd, string src_dir, string fname,
 	bool copy_success;
 
 	for (int retries = 0; retries < MAX_FILE_RETRIES; retries++) {
-		cerr << "File: " << fname 
+		*GRADING << "File: " << fname 
 				 << " beginnning transmission, attempt " << retries + 1 << endl;
 		size_t file_size = get_source_size(src_dir, fname);
 		init_filecopy(sockfd, fname, file_id, file_size);
 		send_packets(sockfd, src_dir, fname, file_id, filenastiness);
 		finish_filecopy(sockfd, fname, file_id);
-		cerr << "File: " << fname << " transmission complete, waiting for "
+		*GRADING << "File: " << fname << " transmission complete, waiting for "
 				 << "end-to-end check, attempt " << retries + 1  << endl;
 		copy_success = end_to_end_check(sockfd, fname, src_dir, filenastiness);
 
 		if (copy_success) {
-			cerr << "File: " << fname 
+			*GRADING << "File: " << fname 
 					 << " end-to-end check succeeded, attempt " 
 					 << retries + 1  << endl << endl;
 			return true;
 		} else {
-			cerr << "File: " << fname 
+			*GRADING << "File: " << fname 
 					 << " end-to-end check failed, attempt " 
 					 << retries + 1  << endl << endl;
 		}
