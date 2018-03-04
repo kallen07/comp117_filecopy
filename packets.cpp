@@ -1,4 +1,17 @@
-#include "packets.h"
+/* packets.cpp
+ * Kalina Allen, kallen07
+ * Phoebe Yang, yyang08
+ * COMP 117, Internet-Scale Distributed Systems
+ * FileCopy Assignment
+ * 03/04/2018
+ *
+ * Purpose: Packets related functions for client and server
+ *		client functions: 1) break down buffer into packets
+ *						  2) send packets and windows of packets
+ *		server functions: 1) handle incoming packets
+ *						  2) write packet data to a buffer
+ */
+ #include "packets.h"
 
 
 /////////////////////////////////////////////////////////////////////////

@@ -5,8 +5,9 @@
  * FileCopy Assignment
  * 02/20/2018
  *
- *          
+ * Purpose: Implements the server logic for filecopy
  */
+
 #include "c150nastydgmsocket.h"
 #include "c150nastyfile.h"        // for c150nastyfile & framework
 #include "c150grading.h"

@@ -1,5 +1,16 @@
-#include "fileutils.h"
+/* fileutils.cpp
+ * Kalina Allen, kallen07
+ * Phoebe Yang, yyang08
+ * COMP 117, Internet-Scale Distributed Systems
+ * FileCopy Assignment
+ * 03/04/2018
+ *
+ * Purpose: Utility functions for file related operations, 
+ *			e.g. read/write disk, check file/dir validity,
+ *			rename/remove files, compute SHA1 hash, and etc.
+ */
 
+#include "fileutils.h"
 
 // ------------------------------------------------------
 //
