@@ -250,8 +250,6 @@ void read_file_from_disk(string src, string filename, int nastiness, char* buffe
 void write_file_to_disk(string target, string filename, int nastiness, 
 						char* buffer, size_t sourceSize)
 {
-	printf("Writing file %s\n", filename.c_str());
-
 	// vars
 	size_t len;
 	char *buffer_copy = (char *)malloc(sourceSize);

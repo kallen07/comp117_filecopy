@@ -36,7 +36,7 @@ using namespace std;
 
 const int SERVERARG = 1;
 const int SRC_ARG = 4;       // name of source file
-const int TIMEOUT = 2000;    // in milliseconds
+const int TIMEOUT = 1500;    // in milliseconds
 
 ////////////////////////////////////////////////////////////////////////////////
 /*************************** FUNCTION DECLARATIONS ****************************/
@@ -48,7 +48,7 @@ void parse_command_line_args(int argc, char *argv[], int &networknastiness,
 							 int &filenastiness);
 bool copy_file(C150DgmSocket *sockfd, string src_dir, string fname, 
 			   uint32_t file_id, int filenastiness);
-void init_filecopy(C150DgmSocket *sockfd, string fname, uint32_t file_id);
+void init_filecopy(C150DgmSocket *sockfd, string fname, uint32_t file_id, size_t fsize);
 void send_packets(C150DgmSocket *sockfd, string src_dir, string fname,
 				  uint32_t file_id, int filenastiness);
 void finish_filecopy(C150DgmSocket *sockfd, string fname, uint32_t file_id);
@@ -193,7 +193,8 @@ bool copy_file(C150DgmSocket *sockfd, string src_dir, string fname,
 	for (int retries = 0; retries < MAX_FILE_RETRIES; retries++) {
 		cerr << "File: " << fname 
 				 << " beginnning transmission, attempt " << retries + 1 << endl;
-		init_filecopy(sockfd, fname, file_id);
+		size_t file_size = get_source_size(src_dir, fname);
+		init_filecopy(sockfd, fname, file_id, file_size);
 		send_packets(sockfd, src_dir, fname, file_id, filenastiness);
 		finish_filecopy(sockfd, fname, file_id);
 		cerr << "File: " << fname << " transmission complete, waiting for "
@@ -222,13 +223,14 @@ bool copy_file(C150DgmSocket *sockfd, string src_dir, string fname,
  * 		fname: name of the file to copy
  * 		file_id: id of file to copy
  */
-void init_filecopy(C150DgmSocket *sockfd, string fname, uint32_t file_id)
-{
+void init_filecopy(C150DgmSocket *sockfd, string fname, uint32_t file_id, size_t fsize)
+{	
 	/* create file copy request msg */
 	struct file_copy_header init_msg;
 	init_msg.type = SEND;
 	strcpy(init_msg.filename, fname.c_str());
 	init_msg.file_id = file_id;
+	init_msg.file_size = fsize;
 
 	send_file_message(sockfd, (char *)&init_msg, SEND_ACK, file_id);
 }
@@ -259,6 +261,7 @@ void finish_filecopy(C150DgmSocket *sockfd, string fname, uint32_t file_id)
 	done_msg.type = SEND_DONE;
 	strcpy(done_msg.filename, fname.c_str());
 	done_msg.file_id = file_id;
+	done_msg.file_size = -1;
 
 	send_file_message(sockfd, (char *)&done_msg, DONE_ACK, file_id);
 }
@@ -299,8 +302,7 @@ void send_file_message(C150DgmSocket *sock, char *request, int response_type, ui
 		}
 
 		/* retry has failed */
-		if ( sock->timedout() )
-			attempt++;
+		attempt++;
 
 	} while ( attempt < MAX_MSG_RETRY);
 
@@ -401,8 +403,7 @@ void send_e2e_message(char *message_to_send, int res_type, char* filename,
 
 		if (got_hash) break;
 
-		if ( sockfd->timedout() ) 
-			attempt++;
+		attempt++;
 
 	} while ( attempt < MAX_MSG_RETRY );
 

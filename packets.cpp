@@ -75,10 +75,10 @@ void send_file_packets(C150DgmSocket *sock, char *buffer, size_t buffer_size, in
 
 	/* break buffer into packets */
 	buffer_to_packets(buffer, buffer_size, packets, f_id);
+	cout << "Total window: " << num_windows <<endl;
 
 	/* send packets to the server */
 	for (int i=0; i<num_windows; i++) {
-		cout << "window " << i << " " << num_pkts << " " << num_windows <<endl;
 		// last window might have less packets
 		if ( i == num_windows - 1)
 			send_window_packets(sock, packets, i*PKT_WINDOW_SIZE, num_pkts % PKT_WINDOW_SIZE);
@@ -100,7 +100,7 @@ void send_file_packets(C150DgmSocket *sock, char *buffer, size_t buffer_size, in
 // ------------------------------------------------------
 
 void send_window_packets(C150DgmSocket *sock, struct filedata packets[], 
-					  uint64_t start_packet, int total_pkts)
+					  	int start_packet, int total_pkts)
 {
 	
 	set<int> sent_packets; // stores p_id of acknowledged packets
@@ -121,8 +121,11 @@ void send_window_packets(C150DgmSocket *sock, struct filedata packets[],
 
 		/* read for response and check if response is packet_ack */
 		readlen = sock->read(incomingMessage, sizeof(incomingMessage));
-		if (readlen <= 0)
+		if (readlen < 0)
 			throw C150NetworkException("ERROR: server closed the socket\n");
+
+		// cout << packets[0].type << start_packet << endl;
+		// cout << int(packets[start_packet].type) << " " << sizeof(incomingMessage) << endl;
 
 		memcpy(&response, incomingMessage, sizeof(response));
 		is_valid = validate_server_response(incomingMessage, PACKET_ACK, file_id);
@@ -148,14 +151,12 @@ void send_window_packets(C150DgmSocket *sock, struct filedata packets[],
 		if ( sent_packets.size() == (uint32_t)total_pkts )
 			break;
 
-		/* retry has failed */
-		if ( sock->timedout() )
-			attempt++;
+		attempt++;
 
 	} while ( attempt < MAX_PKT_RETRY );
 
 	if (attempt == MAX_PKT_RETRY)
-		throw C150NetworkException("Fail to send packets after max retries.\n");
+		throw C150NetworkException("Fail to send packets after max retries.");
 
 }
 
@@ -225,6 +226,7 @@ void buffer_to_packets(char *buffer, size_t buffer_size,
 		memcpy(pkt.data, &buffer[index_to_byte(i)], pkt_size);
 
 		packets[i] = pkt; // store in packets array
+
 	}
 
 }

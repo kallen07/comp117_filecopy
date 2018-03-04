@@ -12,16 +12,15 @@
 #ifndef GLOBALS_H
 #define GLOBALS_H
 
-#define MAX_FILE_BYTES 1000000   /* 1 MB */
 #define MAX_FILENAME_BYTES 260
 #define MAX_DATA_BYTES 400
 #define MAX_SHA1_BYTES 20
 #define MSG_TYPE_BYTES 1
 
 #define NUM_READ_BUFFER 10
-#define PKT_WINDOW_SIZE 50
-#define MAX_PKT_RETRY 8
-#define MAX_MSG_RETRY 8
+#define PKT_WINDOW_SIZE 100
+#define MAX_PKT_RETRY 5
+#define MAX_MSG_RETRY 5
 
 #define MAX_UDP_MSG_BYTES 512
 #define MAX_FILE_RETRIES 3
@@ -31,6 +30,7 @@ struct __attribute__((__packed__)) file_copy_header {
 	uint8_t type;
 	char filename[MAX_FILENAME_BYTES];
 	uint32_t file_id;
+	size_t file_size;
 };
 
 struct __attribute__((__packed__)) filedata {

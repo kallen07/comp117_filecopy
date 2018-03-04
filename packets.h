@@ -28,7 +28,7 @@ using namespace std;
 void buffer_to_packets(char *buffer, size_t buffer_size, 
 						struct filedata packets[], int f_id);
 void send_file_packets(C150DgmSocket *sock, char *buffer, size_t buffer_size, int f_id);
-void send_window_packets(C150DgmSocket *sock, struct filedata packets[], uint64_t start_packet, int total_pkts);
+void send_window_packets(C150DgmSocket *sock, struct filedata packets[], int start_packet, int total_pkts);
 bool validate_server_response(char *incomingMessage, int type, uint32_t file_id);
 
 // Server function for reassembling packets

@@ -43,18 +43,16 @@ const int TARGET_ARG = 3;      // name of folder in which to copy files
 void parse_command_line_args(int argc, char *argv[], int &networknastiness,
 							 int &filenastiness);
 void handle_message_loop(C150DgmSocket *sock, string target_dir, int filenastiness);
-void send_filecopy_init_ack(
+size_t send_filecopy_init_ack(
 	C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
 	char curr_filename[MAX_FILENAME_BYTES], uint32_t *curr_fileid, 
 	bool is_duplicate);
 void receive_packet(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
-			   uint32_t curr_fileid, char curr_file_buff[MAX_FILE_BYTES],
-			   uint64_t *curr_file_bytes);
+			   uint32_t curr_fileid, char curr_file_buff[]);
 bool is_send_done(
 	C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
 	char curr_filename[MAX_FILENAME_BYTES], uint32_t curr_fileid, string dest_dir,
-  	char curr_file_buff[MAX_FILE_BYTES], uint64_t curr_file_bytes, 
-  	int filenastiness);
+  	char curr_file_buff[], size_t filesize, int filenastiness);
 void send_e2e_hash(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
 				   string curr_filename, bool is_duplicate,
 				   string target, int nastiness);
@@ -151,8 +149,9 @@ void handle_message_loop(C150DgmSocket *sock, string target_dir, int filenastine
 	msg_types type;
 	char curr_filename[MAX_FILENAME_BYTES];
 	uint32_t curr_fileid;
-	char curr_file_buff[MAX_FILE_BYTES];
-	uint64_t curr_file_bytes;
+	char *curr_file_buff; 	// buffer for storing packets
+	bool buff_init = false;
+	size_t filesize;
 
 	while (1) {
 		/* read a message */
@@ -170,23 +169,28 @@ void handle_message_loop(C150DgmSocket *sock, string target_dir, int filenastine
 		switch (type) {
 			case SEND:
 				if (!waiting_for_e2e_results) {
-					send_filecopy_init_ack(sock, buffer, curr_filename, 
+					filesize = send_filecopy_init_ack(sock, buffer, curr_filename, 
 										   &curr_fileid, waiting_for_filedata);
+					if (!buff_init){
+						curr_file_buff = (char*)malloc(filesize);
+						buff_init = true;
+					}
 					waiting_for_filedata = true;
 				}
 				break;
 			case PACKET:
 				if (waiting_for_filedata) {
-					receive_packet(sock, buffer, curr_fileid, 
-								   curr_file_buff, &curr_file_bytes);
+					receive_packet(sock, buffer, curr_fileid, curr_file_buff);
 				}
 				break;
 			case SEND_DONE:
 				if (waiting_for_filedata) {
 					if (is_send_done(sock, buffer, curr_filename, curr_fileid, 
-									target_dir, curr_file_buff, curr_file_bytes,
+									target_dir, curr_file_buff, filesize,
 									filenastiness)) {
 						waiting_for_filedata = false;
+						free(curr_file_buff); // free buffer after writing to disk
+						buff_init = false;
 					}
 				}
 				break;
@@ -219,7 +223,7 @@ void handle_message_loop(C150DgmSocket *sock, string target_dir, int filenastine
 
 
 
-void send_filecopy_init_ack(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
+size_t send_filecopy_init_ack(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
 							char curr_filename[MAX_FILENAME_BYTES], 
 							uint32_t *curr_fileid, bool is_duplicate)
 {
@@ -249,12 +253,13 @@ void send_filecopy_init_ack(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_B
 	/* print to grading log */
 	cerr << "File: " << request.filename
 			 << " starting to receive file" << endl;
+
+	return request.file_size;
 	
 }
 
 void receive_packet(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
-			   uint32_t curr_fileid, char curr_file_buff[MAX_FILE_BYTES],
-			   uint64_t *curr_file_bytes)
+			   uint32_t curr_fileid, char curr_file_buff[])
 {
 	struct filedata packet;
 
@@ -263,7 +268,6 @@ void receive_packet(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
 	/* write the data in the packet */
 	if (packet.file_id == curr_fileid) {
 		memcpy(&(curr_file_buff[packet.start_byte]), &(packet.data), packet.data_len);
-		*curr_file_bytes = packet.start_byte + packet.data_len;
 	}
 
 	/* send an ack */
@@ -279,7 +283,7 @@ void receive_packet(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
 bool is_send_done(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
 		         char curr_filename[MAX_FILENAME_BYTES], 
   				 uint32_t curr_fileid, string dest_dir,
-  				 char curr_file_buff[MAX_FILE_BYTES], uint64_t curr_file_bytes,
+  				 char curr_file_buff[], size_t filesize,
   				 int filenastiness)
 {
 	struct file_copy_header request;
@@ -289,7 +293,7 @@ bool is_send_done(C150DgmSocket *sock, char incoming_msg[MAX_UDP_MSG_BYTES],
 
 		/* write buffer to disk as TMP file */
 		write_file_to_disk(dest_dir, curr_filename, filenastiness, 
-						   curr_file_buff, curr_file_bytes);
+						   curr_file_buff, filesize);
 
 		/* construct response */
 		struct file_copy_header response;
